@@ -50,6 +50,7 @@ app go to Keys → add the "Ollama (local)" preset → Load models. No API key i
 | `KEY_STORE_SECRET` | — | Encrypts API keys saved from the Keys page |
 | `OLLAMA_NUM_CTX` | `32768` | Context window for Ollama models |
 | `RENDER_CONCURRENCY` | `75%` | Remotion render threads |
+| `RENDER_SLOTS` | `1` | Clips rendered at the same time (server-wide) |
 | `WHISPER_MODEL` / `WHISPER_DEVICE` / `WHISPER_LANGUAGE` | — | Whisper overrides |
 
 ## Project layout
@@ -81,18 +82,23 @@ Tested on two real Hindi/English podcasts (38 and 53 minutes).
 - **Qwen3 14B (local)** returned single 3–10 s lines, so every pick was dropped.
 - **Groq free tier**: an 8,000 tokens/min limit is too small for a full transcript.
 
-**Known issues (priority order)**
-1. Rendering several clips at once overloads the machine (Chrome timeouts, 8–13 min
-   per clip). A render queue is needed.
-2. Split layout sometimes frames a background object (a plant) as the second person.
-3. Clips longer than the maximum are hard-cut mid-sentence.
-4. Clips sometimes start mid-sentence or miss the interviewer's question.
-5. Compare downloads the whole video before fetching captions (about 5 min wasted).
+**Fixed**
+- Parallel renders overloaded the machine (8–13 min per clip, Chrome timeouts).
+  Renders are now queued, and captions and framing for upcoming clips are prepared during the current render.
+- Split layout framed a background plant as a second person. Motionless
+  detections are now ignored.
+- Over-long clips were hard-cut mid-sentence. They now end on a transcript line.
+
+**Open issues (priority order)**
+1. Clips sometimes start mid-sentence or miss the interviewer's question.
+2. Compare downloads the whole video before fetching captions (about 5 min wasted).
+3. `gemini-2.5-flash` (the default fallback) is retired for new API keys.
 
 ## Roadmap
 
-1. Fix the issues above (render queue, framing, sentence-aligned boundaries).
-2. Add 👍/👎 + reason buttons on each clip to build a labelled dataset.
-3. Fine-tune our own clip-picking model (Qwen3 8B or Gemma 12B, QLoRA with
-   Unsloth on a 16 GB GPU) on about 300 labelled clips, working on 5-minute transcript chunks.
-   Goal: a free local model that matches or beats Gemini, so we no longer depend on it.
+1. Measure a baseline with Gemma 3 12B (local, via Ollama) against Gemini.
+2. Add a review panel (keep or reject + reason, adjust the start and end) that exports a labelled dataset.
+3. Fine-tune Gemma 3 12B (QLoRA with Unsloth on a 16 GB GPU) on about 300 reviewed clips,
+   using 5-minute transcript chunks. Gemini is a benchmark only; its output is not used
+   for training (API terms).
+4. Cut the end-to-end time from 20–25 min to 10–15 min per video.
