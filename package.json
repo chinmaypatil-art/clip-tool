@@ -1,0 +1,41 @@
+{
+  "name": "clip-tool",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^1.4.0",
+    "@google/genai": "^2.32.0",
+    "@remotion/bundler": "^4.0.540",
+    "@remotion/captions": "^4.0.540",
+    "@remotion/cli": "^4.0.540",
+    "@remotion/install-whisper-cpp": "^4.0.540",
+    "@remotion/media-utils": "^4.0.540",
+    "@remotion/renderer": "^4.0.540",
+    "clsx": "^2.1.1",
+    "framer-motion": "^14.9.0",
+    "lucide-react": "^1.67.0",
+    "next": "16.4.4",
+    "onnxruntime-node": "^1.31.1",
+    "openai": "^7.47.0",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "remotion": "^4.0.540",
+    "tailwind-merge": "^3.7.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/turbopack": "^4",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "16.4.4",
+    "tailwindcss": "^4",
+    "typescript": "^5"
+  }
+}
