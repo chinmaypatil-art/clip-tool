@@ -1,5 +1,16 @@
 import React from "react";
-import { AbsoluteFill, OffthreadVideo, staticFile, useCurrentFrame, useVideoConfig } from "remotion";
+import { AbsoluteFill, OffthreadVideo, interpolate, staticFile, useCurrentFrame, useVideoConfig } from "remotion";
+
+// Short audio fades so a clip doesn't start or stop on a hard cut mid-sound.
+const FADE_IN_SECONDS = 0.15;
+const FADE_OUT_SECONDS = 0.3;
+const edgeFade = (frame: number, durationInFrames: number, fps: number) =>
+  interpolate(
+    frame,
+    [0, FADE_IN_SECONDS * fps, durationInFrames - FADE_OUT_SECONDS * fps, durationInFrames],
+    [0, 1, 1, 0],
+    { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
+  );
 import type { ClipTemplateProps, FramingSegment } from "../types";
 import { WIDTH, HEIGHT } from "../types";
 
@@ -20,6 +31,7 @@ const SplitHalf: React.FC<{
   aspect: number;
   top: number;
 }> = ({ src, trimBefore, durationInFrames, person, aspect, top }) => {
+  const { fps } = useVideoConfig();
   // Rendered source size: zoom so the face is SPLIT_FACE_SHARE of the width,
   // but never so little that the frame stops covering the half.
   const minWidth = Math.max(WIDTH, HALF_HEIGHT * aspect);
@@ -35,6 +47,7 @@ const SplitHalf: React.FC<{
         trimBefore={trimBefore}
         durationInFrames={durationInFrames}
         muted={top > 0}
+        volume={(f) => edgeFade(f, durationInFrames, fps)}
         style={{ position: "absolute", left, top: y, width: videoWidth, height: videoHeight, maxWidth: "none" }}
       />
     </div>
@@ -89,6 +102,7 @@ export const ClipClassic: React.FC<ClipTemplateProps> = ({
           src={src}
           trimBefore={trimBefore}
           durationInFrames={durationInFrames}
+          volume={(f) => edgeFade(f, durationInFrames, fps)}
           style={{
             width: "100%",
             height: "100%",

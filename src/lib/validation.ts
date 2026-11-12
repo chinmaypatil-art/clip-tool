@@ -1,7 +1,7 @@
 import type { RankedClip } from "./gemini";
 import type { ClipLengthRange } from "./clipLength";
 import type { TranscriptSegment } from "./transcript";
-import { trimTrailingQuestion, fitToMaxLength } from "./clipTrim";
+import { trimTrailingQuestion, fitToMaxLength, snapToSentences } from "./clipTrim";
 
 export interface ValidatedClip {
   startSeconds: number;
@@ -48,9 +48,9 @@ export function validateClips(
 
     if (!pick.title?.trim() || !pick.reason?.trim()) continue;
 
+    const snapped = snapToSentences(start, clampedEnd, range.maxSeconds, segments);
     cleaned.push({
-      startSeconds: start,
-      endSeconds: clampedEnd,
+      ...snapped,
       title: pick.title.trim(),
       reason: pick.reason.trim(),
       score: Math.max(0, Math.min(100, pick.score)),
