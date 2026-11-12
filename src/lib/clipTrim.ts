@@ -22,3 +22,23 @@ export function trimTrailingQuestion(
   const payoff = inside[inside.length - 2];
   return Math.min(endSeconds, payoff.endMs / 1000 + END_PAD_SECONDS);
 }
+
+/**
+ * Brings a too-long clip under `maxSeconds` by ending it after the last
+ * transcript line that finishes in time, instead of cutting mid-sentence.
+ * Falls back to a hard cut when no line ends in a usable place.
+ */
+export function fitToMaxLength(
+  startSeconds: number,
+  endSeconds: number,
+  maxSeconds: number,
+  minSeconds: number,
+  segments: TranscriptSegment[] | undefined
+): number {
+  if (endSeconds - startSeconds <= maxSeconds) return endSeconds;
+  const limit = startSeconds + maxSeconds;
+  const lineEnds = (segments ?? [])
+    .map((s) => s.endMs / 1000)
+    .filter((t) => t > startSeconds + minSeconds && t <= limit);
+  return lineEnds.length ? Math.max(...lineEnds) : limit;
+}

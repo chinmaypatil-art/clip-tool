@@ -23,7 +23,7 @@ import {
 import type { Provider } from "./keystore";
 import { clipLengthRange, type ClipLengthPreset, type ClipLengthRange } from "./clipLength";
 import type { TranscriptSegment } from "./transcript";
-import { trimTrailingQuestion } from "./clipTrim";
+import { trimTrailingQuestion, fitToMaxLength } from "./clipTrim";
 
 export class AnalysisPipelineError extends Error {}
 
@@ -169,7 +169,7 @@ function clampAndDedupe<T extends { startSeconds: number; endSeconds: number; vi
     const end = trimTrailingQuestion(start, Math.max(0, Math.min(clip.endSeconds, durationSeconds)), segments);
     const length = end - start;
     if (length < range.minSeconds * SHORT_TOLERANCE) continue;
-    const clampedEnd = length > range.maxSeconds ? start + range.maxSeconds : end;
+    const clampedEnd = fitToMaxLength(start, end, range.maxSeconds, range.minSeconds * SHORT_TOLERANCE, segments);
     cleaned.push({ ...clip, startSeconds: start, endSeconds: clampedEnd });
   }
   cleaned.sort((a, b) => b.viralScore - a.viralScore);
