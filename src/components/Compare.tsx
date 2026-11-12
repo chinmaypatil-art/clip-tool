@@ -11,7 +11,11 @@ import {
   Play,
   History,
   Trash2,
+  HardDrive,
 } from "lucide-react";
+import { ClipReviewPanel } from "./ClipReviewPanel";
+import type { ClipReview } from "@/lib/review";
+import type { TranscriptSegment } from "@/lib/transcript";
 import { CLIP_LENGTH_PRESETS, DEFAULT_CLIP_LENGTH, type ClipLengthPreset } from "@/lib/clipLength";
 
 type RunStatus = "queued" | "running" | "done" | "error";
@@ -32,6 +36,11 @@ interface AnalysisClip {
   renderFilename?: string;
   renderThumbnailFilename?: string;
   renderError?: string;
+  modelStartSeconds?: number;
+  modelEndSeconds?: number;
+  renderedStartSeconds?: number;
+  renderedEndSeconds?: number;
+  review?: ClipReview;
 }
 
 interface ModelRun {
@@ -53,8 +62,15 @@ interface Analysis {
   error: string | null;
   createdAt: number;
   videoDurationSeconds: number | null;
-  transcript: { segments: unknown[]; language: string; source: string } | null;
+  transcript: { segments: TranscriptSegment[]; language: string; source: string } | null;
   runs: ModelRun[];
+  sourceDeleted?: boolean;
+}
+
+interface TrainingStats {
+  reviews: number;
+  good: number;
+  examples: number;
 }
 
 interface ProviderInfo {
@@ -94,6 +110,21 @@ export default function Compare() {
   const [history, setHistory] = useState<Analysis[] | null>(null);
   const [showHistory, setShowHistory] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [training, setTraining] = useState<TrainingStats | null>(null);
+  const [deleteRenders, setDeleteRenders] = useState(false);
+  const [cleanupError, setCleanupError] = useState<string | null>(null);
+  const [cleaning, setCleaning] = useState(false);
+
+  const refreshTraining = useCallback(async () => {
+    const res = await fetch("/api/training");
+    if (res.ok) setTraining(await res.json());
+  }, []);
+
+  useEffect(() => {
+    fetch("/api/training")
+      .then((r) => r.json())
+      .then(setTraining);
+  }, []);
 
   useEffect(() => {
     fetch("/api/analyses?providers=1")
@@ -213,6 +244,32 @@ export default function Compare() {
     poll(analysis.id);
   };
 
+  const refreshAnalysis = async () => {
+    if (!analysis) return;
+    const res = await fetch(`/api/analyses/${analysis.id}`);
+    if (res.ok) setAnalysis(await res.json());
+    refreshTraining();
+  };
+
+  const handleCleanup = async () => {
+    if (!analysis || cleaning) return;
+    setCleaning(true);
+    setCleanupError(null);
+    try {
+      const res = await fetch(`/api/analyses/${analysis.id}/cleanup`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ renders: deleteRenders }),
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => null))?.error ?? "Cleanup failed.");
+      await refreshAnalysis();
+    } catch (err) {
+      setCleanupError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setCleaning(false);
+    }
+  };
+
   const handleOpenHistory = async (id: string) => {
     const res = await fetch(`/api/analyses/${id}`);
     if (!res.ok) return;
@@ -229,6 +286,7 @@ export default function Compare() {
   const duration = analysis?.videoDurationSeconds ?? 0;
   const allClips: Array<{ clip: AnalysisClip; runIndex: number }> = [];
   analysis?.runs.forEach((run, i) => run.clips.forEach((clip) => allClips.push({ clip, runIndex: i })));
+  const reviewedCount = allClips.filter(({ clip }) => clip.review).length;
 
   return (
     <div className="space-y-6">
@@ -329,6 +387,43 @@ export default function Compare() {
               New analysis
             </button>
           </div>
+
+          {allClips.length > 0 && (
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-2xl border border-white/10 bg-white/[0.03] px-5 py-3 text-xs text-zinc-400">
+              <span>
+                Reviewed <span className="font-semibold text-zinc-200">{reviewedCount}/{allClips.length}</span> clips
+              </span>
+              {training && (
+                <span className="text-zinc-500">
+                  Training data: {training.reviews} reviews ({training.good} good) · {training.examples} examples in
+                  storage/training/sft.jsonl
+                </span>
+              )}
+              <div className="ml-auto flex items-center gap-3">
+                {analysis.sourceDeleted ? (
+                  <span className="flex items-center gap-1.5 text-zinc-500">
+                    <HardDrive size={12} /> Video deleted, reviews kept
+                  </span>
+                ) : (
+                  <>
+                    <label className="flex items-center gap-1.5 text-[11px] text-zinc-500">
+                      <input type="checkbox" checked={deleteRenders} onChange={(e) => setDeleteRenders(e.target.checked)} />
+                      also delete rendered clips
+                    </label>
+                    <button
+                      onClick={handleCleanup}
+                      disabled={reviewedCount < allClips.length || cleaning}
+                      title={reviewedCount < allClips.length ? "Review every clip first" : "Delete the downloaded video, keep the training data"}
+                      className="flex items-center gap-1.5 rounded-lg border border-white/10 px-3 py-1 text-[11px] text-zinc-300 hover:border-violet-500/40 hover:text-violet-300 disabled:opacity-40"
+                    >
+                      {cleaning ? <Loader2 size={11} className="animate-spin" /> : <HardDrive size={11} />} Done, free up space
+                    </button>
+                  </>
+                )}
+              </div>
+              {cleanupError && <p className="w-full text-[11px] text-red-300">{cleanupError}</p>}
+            </div>
+          )}
 
           {analysis.status === "extracting_transcript" && (
             <div className="flex items-center gap-2 rounded-2xl border border-white/10 bg-white/[0.03] p-6 text-sm text-zinc-400">
@@ -492,7 +587,7 @@ export default function Compare() {
                           </p>
                           <p className="mb-1 text-[11px] italic text-zinc-400">&ldquo;{clip.hook}&rdquo;</p>
                           <p className="mb-2 text-[11px] text-zinc-500">{clip.reasoning}</p>
-                          {clip.renderStatus === "pending" && (
+                          {clip.renderStatus === "pending" && !analysis.sourceDeleted && (
                             <button
                               onClick={() => handleRender(run.id, clip.id)}
                               className="flex items-center gap-1.5 rounded-lg bg-white/5 px-2.5 py-1.5 text-[11px] text-zinc-300 hover:bg-violet-600 hover:text-white"
@@ -508,7 +603,8 @@ export default function Compare() {
                           {clip.renderStatus === "done" && clip.renderFilename && (
                             <div className="mt-1">
                               <video
-                                src={`/api/analyses/${analysis.id}/files/${clip.renderFilename}`}
+                                // Re-renders reuse the file name; the edges bust the browser cache.
+                                src={`/api/analyses/${analysis.id}/files/${clip.renderFilename}?v=${clip.renderedStartSeconds ?? ""}-${clip.renderedEndSeconds ?? ""}`}
                                 poster={clip.renderThumbnailFilename ? `/api/analyses/${analysis.id}/files/${clip.renderThumbnailFilename}` : undefined}
                                 controls
                                 className="mb-1.5 w-full rounded-lg"
@@ -524,6 +620,19 @@ export default function Compare() {
                           )}
                           {clip.renderStatus === "error" && (
                             <p className="text-[11px] text-red-300">{clip.renderError}</p>
+                          )}
+                          {analysis.transcript && (
+                            <ClipReviewPanel
+                              // Remount after a save so the panel starts from the stored review.
+                              key={`${clip.id}-${clip.review?.reviewedAt ?? 0}-${clip.startSeconds}-${clip.endSeconds}`}
+                              analysisId={analysis.id}
+                              runId={run.id}
+                              clip={clip}
+                              segments={analysis.transcript.segments}
+                              canRender={!analysis.sourceDeleted}
+                              onSaved={refreshAnalysis}
+                              onRerender={() => handleRender(run.id, clip.id)}
+                            />
                           )}
                         </div>
                       ))}

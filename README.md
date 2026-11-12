@@ -24,6 +24,21 @@ Two screens:
   can judge which model picks the best clips. Users can add any
   OpenAI-compatible provider (Groq, OpenRouter, Ollama, ...) under Keys.
 
+## Reviewing clips (training data)
+
+Every clip in Compare has a review panel: Good / Bad, a reason tag for bad
+clips, and arrows that move the start or end one whole sentence. Saving a
+review rebuilds `storage/training/`:
+
+- `reviews.jsonl`: every reviewed clip from every model (benchmarks, stats).
+- `sft.jsonl`: chat-format fine-tuning examples, one per 5-minute transcript
+  window that holds a reviewed clip. The answer is the approved clips with
+  corrected edges. Gemini's clips are left out (API terms).
+
+When every clip of a video is reviewed, "Done, free up space" deletes the
+downloaded video and audio files; `analysis.json` (transcript, picks,
+reviews) is kept.
+
 ## Setup
 
 Requirements: Node 20+, ffmpeg on PATH, an NVIDIA GPU is recommended (Whisper

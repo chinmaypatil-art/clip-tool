@@ -5,6 +5,8 @@ import { mkdir, readFile, writeFile, readdir } from "fs/promises";
 import type { TranscriptSegment } from "./transcript";
 import type { NormalizedClip } from "./providers/types";
 import type { Provider } from "./keystore";
+import type { ClipLengthPreset } from "./clipLength";
+import type { ClipReview } from "./review";
 
 export type AnalysisStatus = "extracting_transcript" | "ready" | "error";
 export type RunStatus = "queued" | "running" | "done" | "error";
@@ -12,6 +14,13 @@ export type RenderStatus = "pending" | "rendering" | "done" | "error";
 
 export interface AnalysisClip extends NormalizedClip {
   id: string;
+  /** The model's own edges, kept when a reviewer corrects startSeconds/endSeconds. */
+  modelStartSeconds?: number;
+  modelEndSeconds?: number;
+  review?: ClipReview;
+  /** The edges the current render file was made with. */
+  renderedStartSeconds?: number;
+  renderedEndSeconds?: number;
   renderStatus: RenderStatus;
   renderFilename?: string;
   renderThumbnailFilename?: string;
@@ -31,6 +40,7 @@ export interface ModelRun {
   attempts: number | null;
   error: string | null;
   promptVersion: string;
+  clipLength?: ClipLengthPreset;
   clips: AnalysisClip[];
   rawResponse: unknown;
 }
@@ -47,6 +57,8 @@ export interface Analysis {
   videoDurationSeconds: number | null;
   transcript: { segments: TranscriptSegment[]; language: string; source: string } | null;
   runs: ModelRun[];
+  /** source.mp4 was deleted after review, so clips can no longer be rendered. */
+  sourceDeleted?: boolean;
 }
 
 const analyses = processSingleton("analyses", () => new Map<string, Analysis>());

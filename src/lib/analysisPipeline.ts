@@ -1,5 +1,5 @@
 import path from "path";
-import { copyFile } from "fs/promises";
+import { copyFile, rm } from "fs/promises";
 import { createTikTokStyleCaptions } from "@remotion/captions";
 import { randomUUID } from "crypto";
 import { downloadVideo, probeVideo, extractAudioSegment, captureThumbnail, isYoutubeUrl, isUrl, MediaError } from "./media";
@@ -127,6 +127,7 @@ export async function runModelAgainstAnalysis(
     attempts: null,
     error: null,
     promptVersion: ANALYSIS_PROMPT_VERSION,
+    clipLength,
     clips: [],
     rawResponse: null,
   };
@@ -185,6 +186,17 @@ function clampAndDedupe<T extends { startSeconds: number; endSeconds: number; vi
 
 const serveUrlCache = new Map<string, string>();
 
+/**
+ * Deletes the Remotion bundle made for an analysis. Bundling copies the whole
+ * analysis folder (source video included) into a temp directory, so this
+ * matters when freeing disk space.
+ */
+export async function forgetRenderBundle(analysisId: string): Promise<void> {
+  const serveUrl = serveUrlCache.get(analysisId);
+  serveUrlCache.delete(analysisId);
+  if (serveUrl && path.isAbsolute(serveUrl)) await rm(serveUrl, { recursive: true, force: true }).catch(() => {});
+}
+
 /** Renders one clip from one model run, reusing the existing Remotion pipeline unchanged. */
 export async function renderAnalysisClip(analysisId: string, runId: string, clipId: string): Promise<void> {
   const analysis = getAnalysis(analysisId);
@@ -193,25 +205,27 @@ export async function renderAnalysisClip(analysisId: string, runId: string, clip
   if (!analysis || !run || !clip) throw new AnalysisPipelineError("Clip not found.");
 
   updateRunClip(analysisId, runId, clipId, { renderStatus: "rendering" });
+  // A reviewer may change the edges while this renders; render what was asked.
+  const { startSeconds, endSeconds } = clip;
 
   try {
     const dir = analysisDir(analysisId);
     const sourcePath = path.join(dir, "source.mp4");
-    const clipLength = clip.endSeconds - clip.startSeconds;
+    const clipLength = endSeconds - startSeconds;
     const filename = `render-${runId}-${clip.id}.mp4`;
     const thumbFilename = `render-${runId}-${clip.id}-thumb.jpg`;
     const outPath = path.join(dir, filename);
     const wavPath = path.join(dir, `render-${runId}-${clip.id}-audio.wav`);
 
     // Face-aware crop, computed alongside captions; letterbox if it fails.
-    const framingPromise = analyzeFraming(sourcePath, clip.startSeconds, clipLength).catch((err) => {
+    const framingPromise = analyzeFraming(sourcePath, startSeconds, clipLength).catch((err) => {
       console.error(`[analysisPipeline] framing analysis failed for ${analysisId}/${runId}/${clipId}:`, err);
       return [];
     });
 
     let captionPages: ReturnType<typeof createTikTokStyleCaptions>["pages"] = [];
     try {
-      await extractAudioSegment(sourcePath, wavPath, clip.startSeconds, clipLength);
+      await extractAudioSegment(sourcePath, wavPath, startSeconds, clipLength);
       const captions = await transcribeWav(wavPath, { romanizer: await getLocalRomanizer(run.provider, run.model) });
       captionPages = createTikTokStyleCaptions({ captions, combineTokensWithinMilliseconds: 1200 }).pages;
     } catch (err) {
@@ -228,7 +242,7 @@ export async function renderAnalysisClip(analysisId: string, runId: string, clip
       serveUrl,
       outputPath: outPath,
       videoFileName: "source.mp4",
-      trimStartSeconds: clip.startSeconds,
+      trimStartSeconds: startSeconds,
       durationSeconds: clipLength,
       title: clip.title,
       captionPages,
@@ -239,6 +253,8 @@ export async function renderAnalysisClip(analysisId: string, runId: string, clip
 
     updateRunClip(analysisId, runId, clipId, {
       renderStatus: "done",
+      renderedStartSeconds: startSeconds,
+      renderedEndSeconds: endSeconds,
       renderFilename: filename,
       renderThumbnailFilename: thumbFilename,
     });

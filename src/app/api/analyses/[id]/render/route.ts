@@ -14,9 +14,16 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     return NextResponse.json({ error: "Provide `targets`: [{runId, clipId}, ...]." }, { status: 400 });
   }
 
+  if (analysis.sourceDeleted) {
+    return NextResponse.json({ error: "The source video was deleted to free space." }, { status: 409 });
+  }
   for (const t of targets) {
     if (typeof t?.runId !== "string" || typeof t?.clipId !== "string") {
       return NextResponse.json({ error: "Each target needs runId and clipId." }, { status: 400 });
+    }
+    const clip = analysis.runs.find((r) => r.id === t.runId)?.clips.find((c) => c.id === t.clipId);
+    if (clip?.renderStatus === "rendering") {
+      return NextResponse.json({ error: "That clip is already rendering." }, { status: 409 });
     }
   }
 
