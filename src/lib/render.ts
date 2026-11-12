@@ -4,6 +4,7 @@ import { renderMedia, selectComposition, openBrowser, type HeadlessBrowser } fro
 import type { TikTokPage } from "@remotion/captions";
 import type { FramingSegment } from "../../remotion/types";
 import { createLimiter } from "./limit";
+import { processSingleton } from "./processState";
 
 export class RenderError extends Error {
   constructor(message: string, public readonly cause?: unknown) {
@@ -18,7 +19,7 @@ const RENDER_CONCURRENCY = process.env.RENDER_CONCURRENCY ?? "75%";
 // Each render already uses most CPU threads, so renders run one after another
 // (server-wide, across jobs and Compare). Five at once took 8-13 min each and
 // some timed out starting Chrome; queued, each gets the whole machine.
-const renderSlot = createLimiter(Math.max(1, Number(process.env.RENDER_SLOTS ?? 1)));
+const renderSlot = processSingleton("renderSlot", () => createLimiter(Math.max(1, Number(process.env.RENDER_SLOTS ?? 1))));
 
 // A headless Chromium launch (~1-2s) was previously paid on every single
 // renderClip() call (5x per job). Reusing one instance across all clips in

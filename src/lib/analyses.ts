@@ -1,4 +1,5 @@
 import { randomUUID } from "crypto";
+import { processSingleton } from "./processState";
 import path from "path";
 import { mkdir, readFile, writeFile, readdir } from "fs/promises";
 import type { TranscriptSegment } from "./transcript";
@@ -48,7 +49,7 @@ export interface Analysis {
   runs: ModelRun[];
 }
 
-const analyses = new Map<string, Analysis>();
+const analyses = processSingleton("analyses", () => new Map<string, Analysis>());
 export const ANALYSES_ROOT = path.join(process.cwd(), "storage", "analyses");
 
 export function analysisDir(id: string): string {
@@ -153,7 +154,7 @@ export function forgetAnalysis(id: string): void {
   analyses.delete(id);
 }
 
-const pendingWrites = new Map<string, NodeJS.Timeout>();
+const pendingWrites = processSingleton("analysisWrites", () => new Map<string, NodeJS.Timeout>());
 const PERSIST_DEBOUNCE_MS = 250;
 
 function persist(analysis: Analysis): void {

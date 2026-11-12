@@ -1,4 +1,5 @@
 import { randomUUID } from "crypto";
+import { processSingleton } from "./processState";
 import path from "path";
 import { mkdir, readFile, writeFile, readdir } from "fs/promises";
 import type { ClipLengthPreset } from "./clipLength";
@@ -43,10 +44,10 @@ export interface Job {
 // is also persisted to disk (job.json next to the job's clips) so history
 // survives a dev-server hot-reload or restart — the in-memory-only version of
 // this lost track of running jobs mid-render, which is the bug that bit us.
-const jobs = new Map<string, Job>();
+const jobs = processSingleton("jobs", () => new Map<string, Job>());
 // Kept separate from the Job record itself so it never leaks into the JSON
 // status response or the persisted file — it's process-control state, not job data.
-const controllers = new Map<string, AbortController>();
+const controllers = processSingleton("jobControllers", () => new Map<string, AbortController>());
 
 export const STORAGE_ROOT = path.join(process.cwd(), "storage", "jobs");
 
@@ -112,7 +113,7 @@ export function updateJob(id: string, patch: Partial<Job>): void {
   persist(job);
 }
 
-const pendingWrites = new Map<string, NodeJS.Timeout>();
+const pendingWrites = processSingleton("jobWrites", () => new Map<string, NodeJS.Timeout>());
 const PERSIST_DEBOUNCE_MS = 250;
 
 function persist(job: Job): void {
