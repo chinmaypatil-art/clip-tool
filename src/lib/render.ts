@@ -3,6 +3,7 @@ import { bundle } from "@remotion/bundler";
 import { renderMedia, selectComposition, openBrowser, type HeadlessBrowser } from "@remotion/renderer";
 import type { TikTokPage } from "@remotion/captions";
 import type { FramingSegment } from "../../remotion/types";
+import { createLimiter } from "./limit";
 
 export class RenderError extends Error {
   constructor(message: string, public readonly cause?: unknown) {
@@ -14,6 +15,10 @@ export class RenderError extends Error {
 const REMOTION_ENTRY = path.join(process.cwd(), "remotion", "index.ts");
 const COMPOSITION_ID = "clip-classic";
 const RENDER_CONCURRENCY = process.env.RENDER_CONCURRENCY ?? "75%";
+// Each render already uses most CPU threads, so renders run one after another
+// (server-wide, across jobs and Compare). Five at once took 8-13 min each and
+// some timed out starting Chrome; queued, each gets the whole machine.
+const renderSlot = createLimiter(Math.max(1, Number(process.env.RENDER_SLOTS ?? 1)));
 
 // A headless Chromium launch (~1-2s) was previously paid on every single
 // renderClip() call (5x per job). Reusing one instance across all clips in
@@ -61,7 +66,11 @@ export interface RenderClipInput {
   onProgress?: (progress: number) => void;
 }
 
-export async function renderClip(input: RenderClipInput): Promise<void> {
+export function renderClip(input: RenderClipInput): Promise<void> {
+  return renderSlot(() => renderClipNow(input));
+}
+
+async function renderClipNow(input: RenderClipInput): Promise<void> {
   const inputProps = {
     videoFileName: input.videoFileName,
     trimStartSeconds: input.trimStartSeconds,

@@ -14,6 +14,7 @@ import {
 import { uploadVideo, analyzeWindow, analyzeTranscript, rankCandidates, GeminiError, type RawCandidate } from "./gemini";
 import { extractYoutubeTranscript, TranscriptError } from "./transcript";
 import { validateClips } from "./validation";
+import { createLimiter } from "./limit";
 import type { TranscriptSegment } from "./transcript";
 import { clipLengthRange, type ClipLengthPreset } from "./clipLength";
 import { transcribeWav, WhisperError } from "./whisper";
@@ -200,6 +201,45 @@ export async function runPipeline({ jobId, source, clipLength }: RunPipelineInpu
     // local-file-path behavior in OffthreadVideo.
     const serveUrl = await timer.time("remotion_bundle", () => bundleForJob(dir));
 
+    // Captions (Whisper, GPU) and framing (CPU) don't depend on rendering, so
+    // they run for upcoming clips while earlier clips render, instead of the
+    // whole job waiting clip by clip. Two at a time keeps the GPU from thrashing.
+    const prepLimit = createLimiter(2);
+    const preps = validated.map((v, i) =>
+      prepLimit(async () => {
+        const clipLength = v.endSeconds - v.startSeconds;
+        const wavPath = path.join(dir, `clip-${i + 1}-audio.wav`);
+        const { path: segmentPath } = segments[i];
+        // Face-aware crop runs alongside captions (it's independent of them).
+        // Like captions it's an enhancement: on failure the clip is letterboxed.
+        const framingPromise = timer.time(`framing_${i + 1}`, () => analyzeFraming(segmentPath)).catch((err) => {
+          console.error(`[pipeline] framing analysis failed for clip ${i + 1}:`, err);
+          return [];
+        });
+        let captionPages: ReturnType<typeof createTikTokStyleCaptions>["pages"] = [];
+        try {
+          // Always transcribe the clip's own audio. YouTube caption text was
+          // reused here before, but it has no per-word timing or spacing (the
+          // whole clip collapsed into one giant caption page) and for Hinglish
+          // videos it's often an English translation, not what was said.
+          const captions = await timer.time(`captions_${i + 1}`, async () => {
+            await extractAudioSegment(segmentPath, wavPath, 0, clipLength);
+            return transcribeWav(wavPath);
+          });
+          captionPages = createTikTokStyleCaptions({
+            captions,
+            combineTokensWithinMilliseconds: 1200,
+          }).pages;
+        } catch (err) {
+          // Captions are an enhancement, not a hard requirement — a clip without
+          // captions is still a usable output, so we degrade gracefully instead
+          // of failing the whole job over a transcription hiccup.
+          console.error(`[pipeline] caption generation failed for clip ${i + 1}:`, err);
+        }
+        return { captionPages, framing: await framingPromise };
+      })
+    );
+
     const clips: JobClip[] = [];
     for (let i = 0; i < validated.length; i++) {
       checkCancelled();
@@ -210,35 +250,8 @@ export async function runPipeline({ jobId, source, clipLength }: RunPipelineInpu
       const wavPath = path.join(dir, `clip-${i + 1}-audio.wav`);
       const { filename: segmentFilename, path: segmentPath } = segments[i];
 
-      updateJob(jobId, { progressMessage: `Transcribing captions for clip ${i + 1}/${validated.length}: "${v.title}"` });
-      // Face-aware crop runs alongside captions (it's independent of them).
-      // Like captions it's an enhancement: on failure the clip is letterboxed.
-      const framingPromise = timer.time(`framing_${i + 1}`, () => analyzeFraming(segmentPath)).catch((err) => {
-        console.error(`[pipeline] framing analysis failed for clip ${i + 1}:`, err);
-        return [];
-      });
-      let captionPages: ReturnType<typeof createTikTokStyleCaptions>["pages"] = [];
-      try {
-        // Always transcribe the clip's own audio. YouTube caption text was
-        // reused here before, but it has no per-word timing or spacing (the
-        // whole clip collapsed into one giant caption page) and for Hinglish
-        // videos it's often an English translation, not what was said.
-        const captions = await timer.time(`captions_${i + 1}`, async () => {
-          await extractAudioSegment(segmentPath, wavPath, 0, clipLength);
-          return transcribeWav(wavPath);
-        });
-        captionPages = createTikTokStyleCaptions({
-          captions,
-          combineTokensWithinMilliseconds: 1200,
-        }).pages;
-      } catch (err) {
-        // Captions are an enhancement, not a hard requirement — a clip without
-        // captions is still a usable output, so we degrade gracefully instead
-        // of failing the whole job over a transcription hiccup.
-        console.error(`[pipeline] caption generation failed for clip ${i + 1}:`, err);
-      }
-
-      const framing = await framingPromise;
+      updateJob(jobId, { progressMessage: `Preparing captions for clip ${i + 1}/${validated.length}: "${v.title}"` });
+      const { captionPages, framing } = await preps[i];
 
       updateJob(jobId, { progressMessage: `Rendering clip ${i + 1}/${validated.length}: "${v.title}"` });
       const renderOnce = () =>
