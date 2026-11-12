@@ -42,6 +42,9 @@ const MIN_SHOT_SECONDS = 0.6;
 const FACE_SCORE = 0.7;
 const MIN_FACE_WIDTH = 0.035; // fraction of source width; smaller faces are background people
 const MIN_PRESENCE = 0.3; // a person must be seen in >=30% of a shot's samples to count
+// Mouth/jaw movement below this is a still object the detector mistook for a
+// face (a plant leaf scored 0.02-0.04; real faces, even listeners, score 10+).
+const MIN_FACE_MOTION = 1;
 
 let sessionPromise: Promise<ort.InferenceSession> | null = null;
 
@@ -222,7 +225,13 @@ function groupPeople(samples: Face[][]): Person[] {
       if (f.motion !== null) person.motion.push(f.motion);
     }
   }
-  return people.filter((p) => p.cx.length >= Math.max(2, samples.length * MIN_PRESENCE));
+  return people.filter(
+    (p) =>
+      p.cx.length >= Math.max(2, samples.length * MIN_PRESENCE) &&
+      // Motion is only measured between frames of the same shot; with no
+      // measurements we can't tell, so keep the face.
+      (p.motion.length === 0 || median(p.motion) >= MIN_FACE_MOTION)
+  );
 }
 
 /** objectPosition x-percentage that centres a crop of width `crop` (0..1 of source width) on `center`. */
