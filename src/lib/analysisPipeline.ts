@@ -23,7 +23,7 @@ import {
 import type { Provider } from "./keystore";
 import { clipLengthRange, type ClipLengthPreset, type ClipLengthRange } from "./clipLength";
 import type { TranscriptSegment } from "./transcript";
-import { trimTrailingQuestion, fitToMaxLength, snapToSentences, endContext, snapToSilence } from "./clipTrim";
+import { trimTrailingQuestion, fitToMaxLength, snapToSentences, endContext, snapToSilence, reachMinLength } from "./clipTrim";
 
 export class AnalysisPipelineError extends Error {}
 
@@ -176,7 +176,9 @@ function clampAndDedupe<T extends { startSeconds: number; endSeconds: number; vi
     const length = end - start;
     if (length < range.minSeconds * SHORT_TOLERANCE) continue;
     const clampedEnd = fitToMaxLength(start, end, range.maxSeconds, range.minSeconds * SHORT_TOLERANCE, segments);
-    const snapped = snapToSentences(start, clampedEnd, range.maxSeconds, segments);
+    const long = reachMinLength(start, clampedEnd, range.minSeconds, durationSeconds);
+    const snapped = snapToSentences(long.startSeconds, long.endSeconds, range.maxSeconds, segments);
+    if (snapped.endSeconds - snapped.startSeconds < range.minSeconds) continue;
     cleaned.push({ ...clip, ...snapped });
   }
   cleaned.sort((a, b) => b.viralScore - a.viralScore);
@@ -220,7 +222,7 @@ async function refineEdges<T extends { startSeconds: number; endSeconds: number 
     }
     try {
       const silences = await findSilences(sourcePath, startSeconds - 1, endSeconds + 4);
-      const snapped = snapToSilence(startSeconds, endSeconds, range.maxSeconds, silences);
+      const snapped = snapToSilence(startSeconds, endSeconds, range, silences);
       if (snapped.endSeconds < nextStart) ({ startSeconds, endSeconds } = snapped);
     } catch (err) {
       console.error("[analysisPipeline] silence snap failed, keeping transcript edges:", err);

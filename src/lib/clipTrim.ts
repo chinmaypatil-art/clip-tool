@@ -208,7 +208,7 @@ const END_SEARCH_BACK = 1;
 export function snapToSilence(
   startSeconds: number,
   endSeconds: number,
-  maxSeconds: number,
+  { minSeconds, maxSeconds }: { minSeconds: number; maxSeconds: number },
   silences: Silence[]
 ): { startSeconds: number; endSeconds: number } {
   // The pause must begin near the edge: a pause after the first spoken word
@@ -221,6 +221,26 @@ export function snapToSilence(
     (s) => s.end > endSeconds + 0.05 && s.start >= endSeconds - END_SEARCH_BACK && s.start <= endSeconds + END_SEARCH_AHEAD
   );
   const end = endGap ? endGap.start + Math.min(0.5, (endGap.end - endGap.start) / 2) : endSeconds;
-  if (end - start > maxSeconds || end - start < 3) return { startSeconds, endSeconds };
+  if (end - start > maxSeconds || end - start < minSeconds) return { startSeconds, endSeconds };
   return { startSeconds: start, endSeconds: end };
+}
+
+// Headroom so later edge snapping can't pull a clip back under the minimum.
+const MIN_LENGTH_MARGIN_SECONDS = 1;
+
+/**
+ * Grows a clip that is shorter than the minimum by moving its start back into
+ * the setup (never past the payoff); at the very start of the video, the end
+ * moves on instead.
+ */
+export function reachMinLength(
+  startSeconds: number,
+  endSeconds: number,
+  minSeconds: number,
+  durationSeconds: number
+): { startSeconds: number; endSeconds: number } {
+  const target = minSeconds + MIN_LENGTH_MARGIN_SECONDS;
+  if (endSeconds - startSeconds >= minSeconds) return { startSeconds, endSeconds };
+  const start = Math.max(0, endSeconds - target);
+  return { startSeconds: start, endSeconds: Math.min(durationSeconds, Math.max(endSeconds, start + target)) };
 }

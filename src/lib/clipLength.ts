@@ -3,10 +3,9 @@
  * the pipeline (server), so keep this file free of Node-only imports.
  */
 export const CLIP_LENGTH_PRESETS = {
-  short: { label: "Short", minSeconds: 20, maxSeconds: 35 },
-  medium: { label: "Medium", minSeconds: 35, maxSeconds: 60 },
-  long: { label: "Long", minSeconds: 60, maxSeconds: 120 },
-  xlong: { label: "Extra long", minSeconds: 120, maxSeconds: 180 },
+  short: { label: "1-2 min", minSeconds: 60, maxSeconds: 120 },
+  medium: { label: "2-3 min", minSeconds: 120, maxSeconds: 180 },
+  long: { label: "3-4 min", minSeconds: 180, maxSeconds: 240 },
 } as const;
 
 export type ClipLengthPreset = keyof typeof CLIP_LENGTH_PRESETS;
@@ -16,7 +15,7 @@ export interface ClipLengthRange {
   maxSeconds: number;
 }
 
-export const DEFAULT_CLIP_LENGTH: ClipLengthPreset = "medium";
+export const DEFAULT_CLIP_LENGTH: ClipLengthPreset = "short";
 
 export function isClipLengthPreset(value: unknown): value is ClipLengthPreset {
   return typeof value === "string" && value in CLIP_LENGTH_PRESETS;
