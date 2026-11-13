@@ -67,6 +67,8 @@ export interface Analysis {
   runs: ModelRun[];
   /** source.mp4 was deleted after review, so clips can no longer be rendered. */
   sourceDeleted?: boolean;
+  /** Removed from history, but its reviews are kept as training data. */
+  archived?: boolean;
 }
 
 const analyses = processSingleton("analyses", () => new Map<string, Analysis>());

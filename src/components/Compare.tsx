@@ -363,7 +363,11 @@ export default function Compare() {
                     {a.sourceLabel}
                   </button>
                   <span className="shrink-0 text-[11px] text-zinc-500">{a.runs.length} run{a.runs.length === 1 ? "" : "s"}</span>
-                  <button onClick={() => handleDeleteHistory(a.id)} className="shrink-0 rounded p-1 text-zinc-500 hover:text-red-300">
+                  <button
+                    onClick={() => handleDeleteHistory(a.id)}
+                    title="Remove from history. Reviewed videos keep their reviews as training data; only the files are deleted."
+                    className="shrink-0 rounded p-1 text-zinc-500 hover:text-red-300"
+                  >
                     <Trash2 size={13} />
                   </button>
                 </div>

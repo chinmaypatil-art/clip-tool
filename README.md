@@ -35,9 +35,10 @@ review rebuilds `storage/training/`:
   (the same windows and prompt Gemma picks with) that holds a reviewed clip.
   The answer is the approved clips with corrected edges. Gemini's clips are left out (API terms).
 
-When every clip of a video is reviewed, "Done, free up space" deletes the
+"Done, free up space" deletes the
 downloaded video and audio files; `analysis.json` (transcript, picks,
-reviews) is kept.
+reviews) is kept. Deleting a reviewed video from history also keeps its
+`analysis.json` (hidden from history) so its reviews stay in training.
 
 ## Setup
 

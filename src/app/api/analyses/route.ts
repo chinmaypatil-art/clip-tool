@@ -10,7 +10,7 @@ export async function GET(req: NextRequest) {
   if (url.searchParams.get("providers") === "1") {
     return NextResponse.json({ providers: await listProviderModels() });
   }
-  const analyses = await listAnalyses();
+  const analyses = (await listAnalyses()).filter((a) => !a.archived);
   return NextResponse.json({ analyses });
 }
 
