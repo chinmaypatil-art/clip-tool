@@ -19,9 +19,6 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   if (clips.some((c) => c.renderStatus === "rendering")) {
     return NextResponse.json({ error: "Wait for renders to finish." }, { status: 409 });
   }
-  if (clips.some((c) => !c.review)) {
-    return NextResponse.json({ error: "Review every clip first; the video is needed to re-render them." }, { status: 409 });
-  }
 
   const body = await req.json().catch(() => ({}));
   const deleteRenders = body?.renders === true;

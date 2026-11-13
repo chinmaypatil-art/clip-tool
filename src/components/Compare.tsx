@@ -454,8 +454,8 @@ export default function Compare() {
                     </label>
                     <button
                       onClick={handleCleanup}
-                      disabled={reviewedCount < allClips.length || cleaning}
-                      title={reviewedCount < allClips.length ? "Review every clip first" : "Delete the downloaded video, keep the training data"}
+                      disabled={cleaning}
+                      title="Delete the downloaded video, keep the reviews (clips can no longer be rendered)"
                       className="flex items-center gap-1.5 rounded-lg border border-white/10 px-3 py-1 text-[11px] text-zinc-300 hover:border-violet-500/40 hover:text-violet-300 disabled:opacity-40"
                     >
                       {cleaning ? <Loader2 size={11} className="animate-spin" /> : <HardDrive size={11} />} Done, free up space
