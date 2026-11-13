@@ -176,20 +176,26 @@ export function createOllamaEndChecker(def: CustomProviderDef, model: string): E
 // Windows per scoring call: three few-minute excerpts fit the context with
 // room to spare.
 const SCORE_BATCH = 3;
+// Output caps: a scoring answer is a few lines, a window's clips about 600
+// tokens. gemma3:12b sometimes loops on one token until Ollama aborts the
+// call ("token repeat limit reached"), which took 8.5 min once.
+const SCORE_MAX_TOKENS = 512;
+const CLIPS_MAX_TOKENS = 2048;
 
 /**
  * Picks clips in two passes, as openshorts does: score few-minute windows of
  * the transcript, then find clips inside the best ones, one window per call.
  * Over a whole 55-min transcript in one call, gemma3:12b put every pick in
  * the first 8 minutes and returned 16-39s clips for a 60s minimum.
+ * A window whose call fails is retried once, then skipped.
  */
 export function createOllamaWindowedPicker(def: CustomProviderDef, model: string): WindowedPicker {
   const nativeUrl = def.baseUrl.replace(/\/v1\/?$/, "") + "/api/chat";
   let usage = { inputTokens: 0, outputTokens: 0 };
-  const chat = async (prompt: string, temperature: number) => {
-    let body: { message?: { content?: string }; prompt_eval_count?: number; eval_count?: number; error?: string };
+  const chat = async (prompt: string, temperature: number, maxTokens: number) => {
+    let res: Response;
     try {
-      const res = await fetch(nativeUrl, {
+      res = await fetch(nativeUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -198,17 +204,31 @@ export function createOllamaWindowedPicker(def: CustomProviderDef, model: string
           format: "json",
           stream: false,
           think: false,
-          options: { num_ctx: OLLAMA_NUM_CTX, temperature },
+          options: { num_ctx: OLLAMA_NUM_CTX, num_predict: maxTokens, temperature },
         }),
       });
-      body = await res.json();
-      if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
     } catch (err) {
+      // Ollama itself is unreachable: no point trying the other windows.
       throw new ProviderError(`${def.label} request failed (is Ollama running at ${def.baseUrl}?): ${describeError(err)}`, "other", err);
     }
+    const body: { message?: { content?: string }; prompt_eval_count?: number; eval_count?: number; error?: string } =
+      await res.json();
     usage.inputTokens += body.prompt_eval_count ?? 0;
     usage.outputTokens += body.eval_count ?? 0;
+    if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
     return body.message?.content ?? "";
+  };
+  // One retry, a little warmer: a repeat loop rarely happens twice.
+  const attempt = async <T>(label: string, run: (temperature: number) => Promise<T>, temperature: number): Promise<T | null> => {
+    for (const t of [temperature, temperature + 0.3]) {
+      try {
+        return await run(t);
+      } catch (err) {
+        if (err instanceof ProviderError) throw err;
+        console.error(`[${def.label}] ${label} failed at temperature ${t}:`, describeError(err));
+      }
+    }
+    return null;
   };
 
   return async ({ segments, targetCount, range }) => {
@@ -219,13 +239,13 @@ export function createOllamaWindowedPicker(def: CustomProviderDef, model: string
 
     const scores = new Map<string, number>();
     for (let b = 0; b < windows.length; b += SCORE_BATCH) {
-      try {
-        const batch = windows.slice(b, b + SCORE_BATCH);
-        for (const [id, score] of parseWindowScores(await chat(buildWindowScorePrompt(batch), 0))) scores.set(id, score);
-      } catch (err) {
-        if (err instanceof ProviderError) throw err;
-        console.error(`[${def.label}] window scoring batch ${b / SCORE_BATCH + 1} failed:`, describeError(err));
-      }
+      const batch = windows.slice(b, b + SCORE_BATCH);
+      const scored = await attempt(
+        `scoring windows ${batch.map((w) => w.id).join(",")}`,
+        async (t) => parseWindowScores(await chat(buildWindowScorePrompt(batch), t, SCORE_MAX_TOKENS)),
+        0.2
+      );
+      for (const [id, score] of scored ?? []) scores.set(id, score);
     }
     // Unscored windows rank last but stay in play; ties keep video order.
     const shortlist = [...windows]
@@ -234,15 +254,19 @@ export function createOllamaWindowedPicker(def: CustomProviderDef, model: string
       .sort((a, b) => a.startSeconds - b.startSeconds);
 
     const clips: NormalizedClip[] = [];
-    const raw: Array<{ window: string; score: number | null; response: string }> = [];
+    const raw: Array<{ window: string; score: number | null; response: string | null }> = [];
     for (const w of shortlist) {
-      const text = await chat(buildWindowClipPrompt(w.segments, range), 0.4);
+      let text: string | null = null;
+      const found = await attempt(
+        `clips for window ${w.id}`,
+        async (t) => {
+          text = await chat(buildWindowClipPrompt(w.segments, range), t, CLIPS_MAX_TOKENS);
+          return parseNormalizedClips(text);
+        },
+        0.4
+      );
       raw.push({ window: `${w.id} ${w.startSeconds.toFixed(0)}-${w.endSeconds.toFixed(0)}s`, score: scores.get(w.id) ?? null, response: text });
-      try {
-        clips.push(...parseNormalizedClips(text));
-      } catch (err) {
-        console.error(`[${def.label}] clips for window ${w.id} failed schema validation:`, describeError(err));
-      }
+      clips.push(...(found ?? []));
     }
     if (!clips.length) throw new ProviderError(`${def.label} found no clips in any window.`, "other");
     return { clips, rawResponse: raw, tokenUsage: { ...usage }, durationMs: Date.now() - start };
