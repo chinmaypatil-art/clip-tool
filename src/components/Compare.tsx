@@ -255,6 +255,11 @@ export default function Compare() {
     (analysis?.runs ?? []).filter((r) => r.status === "running").map((r) => `${r.provider}::${r.model}`)
   );
   const runnable = [...selected].filter((key) => !runningKeys.has(key));
+  // A model that already has a finished run here would run a second time.
+  const ranKeys = new Set(
+    (analysis?.runs ?? []).filter((r) => r.status === "done").map((r) => `${r.provider}::${r.model}`)
+  );
+  const rerunOnly = runnable.length > 0 && runnable.every((key) => ranKeys.has(key));
 
   const handleRunAnalysis = async () => {
     if (!analysis || runnable.length === 0 || starting) return;
@@ -543,7 +548,7 @@ export default function Compare() {
                   disabled={runnable.length === 0 || starting}
                   className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-violet-600 to-fuchsia-600 px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-40"
                 >
-                  {starting ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />} Run {runnable.length || ""} model
+                  {starting ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />} {rerunOnly ? "Re-run" : "Run"} {runnable.length || ""} model
                   {runnable.length === 1 ? "" : "s"}
                 </button>
               </div>
