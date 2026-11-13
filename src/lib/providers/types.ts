@@ -53,34 +53,25 @@ export interface ModelProvider {
   }): Promise<AnalyzeResult>;
 }
 
-export const ANALYSIS_PROMPT_VERSION = "v3";
+export const ANALYSIS_PROMPT_VERSION = "v4";
 
-/** Same instructions for every provider/model — required for a fair comparison. */
-export function buildAnalysisPrompt(segments: TranscriptSegment[], targetCount: number, range: ClipLengthRange): string {
-  const transcriptText = segments
-    .map((s) => `[${(s.startMs / 1000).toFixed(1)}s - ${(s.endMs / 1000).toFixed(1)}s] ${s.text}`)
-    .join("\n");
+function formatTranscript(segments: TranscriptSegment[]): string {
+  return segments.map((s) => `[${(s.startMs / 1000).toFixed(1)}s - ${(s.endMs / 1000).toFixed(1)}s] ${s.text}`).join("\n");
+}
 
-  return `You are an expert short-form video editor who finds viral clip-worthy moments inside long-form video/podcast/interview content, working from a TIMESTAMPED TRANSCRIPT (you cannot see the video itself).
-
-Below is the full transcript, as timestamped segments (seconds from the start of the video):
-
-${transcriptText}
-
-Find exactly ${targetCount} candidate clips for short-form content (Reels/Shorts/TikTok). A good candidate:
-- Works as a STANDALONE clip — no earlier context needed to understand or care about it.
-- Has a strong hook in its opening line (bold claim, question, emotional beat, surprising fact).
+function clipRules(range: ClipLengthRange): string {
+  return `- Works as a STANDALONE clip — no earlier context needed to understand or care about it. If it would open on a pronoun, a "so"/"that", or an answer whose question came earlier, move the START back to where the idea begins; never fix it by cutting the ending short.
+- Has a strong hook in its opening line (bold claim, question, emotional beat, surprising fact). The 2-second test: would the first 2 seconds stop a viewer with no context from scrolling?
 - Is a complete thought/story/exchange, not a mid-idea cutoff.
 - Is between ${range.minSeconds} and ${range.maxSeconds} seconds long. This length range is a hard requirement set by the user.
 - For interviews/podcasts: start the clip on the interviewer's question or setup line, not mid-answer, so the viewer sees both people and gets the context.
 - End the clip only once the speaker has FINISHED their point: the last line must land the payoff/conclusion, not stop mid-explanation or mid-story. Right after that line, stop — NEVER include the start of the next question, a new topic, or a transition line. If the moment is shorter than the range, add setup context BEFORE it, never extra lines after it.
 - Has genuine substance — not filler or someone trailing off.
-- Never includes channel promotion: asking viewers to like, share, subscribe, follow or comment, or a sponsor/ad read.
+- Never includes channel promotion: asking viewers to like, share, subscribe, follow or comment, or a sponsor/ad read.`;
+}
 
-Pick clips spread across the video rather than clustering in one stretch, and make sure none of them overlap in time.
-
-For each of the ${targetCount} clips, return ALL of these fields:
-- start_time: absolute seconds in the video (matching the transcript's own timestamps)
+function clipFields(): string {
+  return `- start_time: absolute seconds in the video (matching the transcript's own timestamps)
 - end_time: absolute seconds in the video
 - title: short punchy working title, 10 words max
 - hook: the specific opening line or moment that grabs attention
@@ -92,6 +83,67 @@ For each of the ${targetCount} clips, return ALL of these fields:
 
 Return ONLY valid JSON matching this exact shape:
 {"clips": [{"start_time": number, "end_time": number, "title": string, "hook": string, "description": string, "reasoning": string, "viral_score": number, "category": string, "engagement_potential": string}, ...]}`;
+}
+
+/** Same instructions for every provider/model — required for a fair comparison. */
+export function buildAnalysisPrompt(segments: TranscriptSegment[], targetCount: number, range: ClipLengthRange): string {
+  return `You are an expert short-form video editor who finds viral clip-worthy moments inside long-form video/podcast/interview content, working from a TIMESTAMPED TRANSCRIPT (you cannot see the video itself).
+
+Below is the full transcript, as timestamped segments (seconds from the start of the video):
+
+${formatTranscript(segments)}
+
+Find exactly ${targetCount} candidate clips for short-form content (Reels/Shorts/TikTok). A good candidate:
+${clipRules(range)}
+
+Pick clips spread across the video rather than clustering in one stretch, and make sure none of them overlap in time.
+
+For each of the ${targetCount} clips, return ALL of these fields:
+${clipFields()}`;
+}
+
+/** Pass 1 of windowed picking: how strong is the best moment in each window? */
+export function buildWindowScorePrompt(windows: Array<{ id: string; segments: TranscriptSegment[] }>): string {
+  const blocks = windows.map((w) => `=== WINDOW ${w.id} ===\n${formatTranscript(w.segments)}`).join("\n\n");
+  return `You are a senior short-form video strategist. Below are excerpts ("windows") of a long podcast/interview transcript, with timestamps in seconds.
+
+${blocks}
+
+Score EVERY window from 0 to 100 for how strong a viral short-form clip (Reels/Shorts) could be cut from it.
+- The 2-second test is the main criterion: would the opening of the best moment in it make a viewer with no context keep watching? Moments that only work with earlier context score low.
+- Score high for strong hooks, conflict, surprise, emotion, a big number, a clear payoff, a complete story.
+- Score low for filler, intros/outros, housekeeping, rambling transitions, and channel promotion (like/share/subscribe, ads).
+
+Return ONLY JSON: {"windows": [{"id": string, "score": number}, ...]} with one entry per window.`;
+}
+
+export function parseWindowScores(jsonText: string): Map<string, number> {
+  const stripped = jsonText.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/i, "");
+  const items = (JSON.parse(stripped) as { windows?: unknown })?.windows;
+  const scores = new Map<string, number>();
+  if (!Array.isArray(items)) return scores;
+  for (const item of items) {
+    const { id, score } = (item ?? {}) as { id?: unknown; score?: unknown };
+    if (typeof id === "string" && Number.isFinite(Number(score))) scores.set(id, Number(score));
+  }
+  return scores;
+}
+
+/** Pass 2 of windowed picking: the clips inside one shortlisted window. */
+export function buildWindowClipPrompt(segments: TranscriptSegment[], range: ClipLengthRange): string {
+  const from = (segments[0]?.startMs ?? 0) / 1000;
+  const to = (segments[segments.length - 1]?.endMs ?? 0) / 1000;
+  return `You are an expert short-form video editor who finds viral clip-worthy moments inside long-form video/podcast/interview content, working from a TIMESTAMPED TRANSCRIPT (you cannot see the video itself).
+
+Below is one excerpt of a longer video, ${from.toFixed(1)}s to ${to.toFixed(1)}s, as timestamped segments (seconds from the start of the video). It was already shortlisted as one of the strongest parts of the video:
+
+${formatTranscript(segments)}
+
+Find 1 or 2 clips for short-form content (Reels/Shorts/TikTok) inside this excerpt. Return 2 only if they are genuinely different moments that do not overlap; return none only if nothing here is worth publishing. Every clip must start and end inside ${from.toFixed(1)}s-${to.toFixed(1)}s. A good clip:
+${clipRules(range)}
+
+For each clip, return ALL of these fields:
+${clipFields()}`;
 }
 
 export function parseNormalizedClips(jsonText: string): NormalizedClip[] {
@@ -130,6 +182,13 @@ export function parseNormalizedClips(jsonText: string): NormalizedClip[] {
   }
   return out;
 }
+
+/** Picks clips window by window instead of from the whole transcript at once. */
+export type WindowedPicker = (args: {
+  segments: TranscriptSegment[];
+  targetCount: number;
+  range: ClipLengthRange;
+}) => Promise<AnalyzeResult>;
 
 /** A clip's closing sentences and the ones that follow it in the video. */
 export interface EndCheckInput {

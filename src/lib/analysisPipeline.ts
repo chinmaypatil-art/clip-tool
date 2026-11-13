@@ -7,7 +7,7 @@ import { extractYoutubeTranscript, captionsToSegments, referenceText, Transcript
 import { transcribeWav, WhisperError } from "./whisper";
 import { bundleForJob, renderClip, RenderError } from "./render";
 import { analyzeFraming } from "./framing";
-import { runAnalysis, listAllProviders, getLocalRomanizer, getLocalEndChecker } from "./providers/registry";
+import { runAnalysis, listAllProviders, getLocalRomanizer, getLocalEndChecker, getLocalWindowedPicker } from "./providers/registry";
 import { ANALYSIS_PROMPT_VERSION, ProviderError, type EndChecker } from "./providers/types";
 import {
   ensureAnalysisDir,
@@ -183,8 +183,16 @@ export async function pickClips({
   range: ClipLengthRange;
   sourcePath: string;
 }) {
-  const result = await runAnalysis(provider, model, segments, TARGET_CLIP_COUNT, range);
-  const picked = clampAndDedupe(result.clips, durationSeconds, range, segments);
+  // Local models read the transcript a few minutes at a time; cloud models
+  // (the benchmark) still get it whole in one call.
+  const windowed = await getLocalWindowedPicker(provider, model);
+  const result = windowed
+    ? {
+        ...(await windowed({ segments, targetCount: TARGET_CLIP_COUNT, range })),
+        meta: { keyId: "local", keyLabel: "local (no key)", attempts: 1 },
+      }
+    : await runAnalysis(provider, model, segments, TARGET_CLIP_COUNT, range);
+  const picked = keepBest(clampAndDedupe(result.clips, durationSeconds, range, segments), TARGET_CLIP_COUNT);
   const clips = await refineEdges(picked, range, segments, sourcePath, await getLocalEndChecker(provider, model));
   return { ...result, clips };
 }
@@ -216,6 +224,19 @@ function clampAndDedupe<T extends { startSeconds: number; endSeconds: number; vi
   }
   kept.sort((a, b) => a.startSeconds - b.startSeconds);
   return kept;
+}
+
+/**
+ * The `count` highest-scoring clips, back in video order. By score, never by
+ * position: dropping the tail of a time-sorted list throws away the back half
+ * of the video.
+ */
+function keepBest<T extends { startSeconds: number; viralScore: number }>(clips: T[], count: number): T[] {
+  if (clips.length <= count) return clips;
+  return [...clips]
+    .sort((a, b) => b.viralScore - a.viralScore)
+    .slice(0, count)
+    .sort((a, b) => a.startSeconds - b.startSeconds);
 }
 
 /**

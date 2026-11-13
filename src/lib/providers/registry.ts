@@ -4,11 +4,17 @@ import { geminiProvider } from "./gemini";
 import { openaiProvider } from "./openai";
 import { anthropicProvider } from "./anthropic";
 import { getEligibleKeys, advanceRotation, markRateLimited, markInvalid, recordUsage, listCustomProviders, listKeys, isLocalBaseUrl } from "../keystore";
-import { createOpenAICompatibleProvider, createOllamaEndChecker, createOllamaRomanizer, isOllama } from "./openaiCompatible";
+import {
+  createOpenAICompatibleProvider,
+  createOllamaEndChecker,
+  createOllamaRomanizer,
+  createOllamaWindowedPicker,
+  isOllama,
+} from "./openaiCompatible";
 import type { Romanizer } from "../whisper";
 import type { Provider } from "../keystore";
 import type { TranscriptSegment } from "../transcript";
-import type { AnalyzeResult, EndChecker } from "./types";
+import type { AnalyzeResult, EndChecker, WindowedPicker } from "./types";
 import type { ClipLengthRange } from "../clipLength";
 
 export const PROVIDERS: Record<string, ModelProvider> = {
@@ -156,4 +162,11 @@ export async function getLocalEndChecker(providerId: string, model: string): Pro
   const def = (await listCustomProviders()).find((p) => p.id === providerId);
   if (!def || !isOllama(def.baseUrl)) return undefined;
   return createOllamaEndChecker(def, model);
+}
+
+/** Local models pick clips window by window (see createOllamaWindowedPicker). Undefined for cloud models. */
+export async function getLocalWindowedPicker(providerId: string, model: string): Promise<WindowedPicker | undefined> {
+  const def = (await listCustomProviders()).find((p) => p.id === providerId);
+  if (!def || !isOllama(def.baseUrl)) return undefined;
+  return createOllamaWindowedPicker(def, model);
 }

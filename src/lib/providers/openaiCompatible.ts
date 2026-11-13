@@ -1,8 +1,19 @@
 import OpenAI, { AuthenticationError, PermissionDeniedError, RateLimitError } from "openai";
-import type { ModelProvider, AnalyzeResult } from "./types";
-import { buildAnalysisPrompt, buildEndCheckPrompt, parseEndCheck, parseNormalizedClips, ProviderError, type EndChecker } from "./types";
+import type { ModelProvider, AnalyzeResult, NormalizedClip, WindowedPicker } from "./types";
+import {
+  buildAnalysisPrompt,
+  buildEndCheckPrompt,
+  buildWindowClipPrompt,
+  buildWindowScorePrompt,
+  parseEndCheck,
+  parseNormalizedClips,
+  parseWindowScores,
+  ProviderError,
+  type EndChecker,
+} from "./types";
 import type { CustomProviderDef } from "../keystore";
 import { romanizeInBatches } from "../gemini";
+import { buildTranscriptWindows } from "../transcriptWindows";
 
 /**
  * Builds a provider for any service that speaks the OpenAI chat-completions
@@ -159,6 +170,82 @@ export function createOllamaEndChecker(def: CustomProviderDef, model: string): E
     const body: { message?: { content?: string }; error?: string } = await res.json();
     if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
     return parseEndCheck(body.message?.content ?? "", inside.length, following.length);
+  };
+}
+
+// Windows per scoring call: three few-minute excerpts fit the context with
+// room to spare.
+const SCORE_BATCH = 3;
+
+/**
+ * Picks clips in two passes, as openshorts does: score few-minute windows of
+ * the transcript, then find clips inside the best ones, one window per call.
+ * Over a whole 55-min transcript in one call, gemma3:12b put every pick in
+ * the first 8 minutes and returned 16-39s clips for a 60s minimum.
+ */
+export function createOllamaWindowedPicker(def: CustomProviderDef, model: string): WindowedPicker {
+  const nativeUrl = def.baseUrl.replace(/\/v1\/?$/, "") + "/api/chat";
+  let usage = { inputTokens: 0, outputTokens: 0 };
+  const chat = async (prompt: string, temperature: number) => {
+    let body: { message?: { content?: string }; prompt_eval_count?: number; eval_count?: number; error?: string };
+    try {
+      const res = await fetch(nativeUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model,
+          messages: [{ role: "user", content: prompt }],
+          format: "json",
+          stream: false,
+          think: false,
+          options: { num_ctx: OLLAMA_NUM_CTX, temperature },
+        }),
+      });
+      body = await res.json();
+      if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
+    } catch (err) {
+      throw new ProviderError(`${def.label} request failed (is Ollama running at ${def.baseUrl}?): ${describeError(err)}`, "other", err);
+    }
+    usage.inputTokens += body.prompt_eval_count ?? 0;
+    usage.outputTokens += body.eval_count ?? 0;
+    return body.message?.content ?? "";
+  };
+
+  return async ({ segments, targetCount, range }) => {
+    const start = Date.now();
+    usage = { inputTokens: 0, outputTokens: 0 };
+    // A window must hold a max-length clip with room to place it.
+    const windows = buildTranscriptWindows(segments, Math.max(90, range.maxSeconds * 1.5));
+
+    const scores = new Map<string, number>();
+    for (let b = 0; b < windows.length; b += SCORE_BATCH) {
+      try {
+        const batch = windows.slice(b, b + SCORE_BATCH);
+        for (const [id, score] of parseWindowScores(await chat(buildWindowScorePrompt(batch), 0))) scores.set(id, score);
+      } catch (err) {
+        if (err instanceof ProviderError) throw err;
+        console.error(`[${def.label}] window scoring batch ${b / SCORE_BATCH + 1} failed:`, describeError(err));
+      }
+    }
+    // Unscored windows rank last but stay in play; ties keep video order.
+    const shortlist = [...windows]
+      .sort((a, b) => (scores.get(b.id) ?? -1) - (scores.get(a.id) ?? -1))
+      .slice(0, Math.min(windows.length, targetCount + 2))
+      .sort((a, b) => a.startSeconds - b.startSeconds);
+
+    const clips: NormalizedClip[] = [];
+    const raw: Array<{ window: string; score: number | null; response: string }> = [];
+    for (const w of shortlist) {
+      const text = await chat(buildWindowClipPrompt(w.segments, range), 0.4);
+      raw.push({ window: `${w.id} ${w.startSeconds.toFixed(0)}-${w.endSeconds.toFixed(0)}s`, score: scores.get(w.id) ?? null, response: text });
+      try {
+        clips.push(...parseNormalizedClips(text));
+      } catch (err) {
+        console.error(`[${def.label}] clips for window ${w.id} failed schema validation:`, describeError(err));
+      }
+    }
+    if (!clips.length) throw new ProviderError(`${def.label} found no clips in any window.`, "other");
+    return { clips, rawResponse: raw, tokenUsage: { ...usage }, durationMs: Date.now() - start };
   };
 }
 
