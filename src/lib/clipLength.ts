@@ -5,7 +5,8 @@
 export const CLIP_LENGTH_PRESETS = {
   short: { label: "Short", minSeconds: 20, maxSeconds: 35 },
   medium: { label: "Medium", minSeconds: 35, maxSeconds: 60 },
-  long: { label: "Long", minSeconds: 60, maxSeconds: 90 },
+  long: { label: "Long", minSeconds: 60, maxSeconds: 120 },
+  xlong: { label: "Extra long", minSeconds: 120, maxSeconds: 180 },
 } as const;
 
 export type ClipLengthPreset = keyof typeof CLIP_LENGTH_PRESETS;
