@@ -2,13 +2,13 @@ import path from "path";
 import { copyFile, rm } from "fs/promises";
 import { createTikTokStyleCaptions } from "@remotion/captions";
 import { randomUUID } from "crypto";
-import { downloadVideo, probeVideo, extractAudioSegment, captureThumbnail, isYoutubeUrl, isUrl, MediaError } from "./media";
+import { downloadVideo, probeVideo, extractAudioSegment, captureThumbnail, findSilences, isYoutubeUrl, isUrl, MediaError } from "./media";
 import { extractYoutubeTranscript, captionsToSegments, TranscriptError } from "./transcript";
 import { transcribeWav, WhisperError } from "./whisper";
 import { bundleForJob, renderClip, RenderError } from "./render";
 import { analyzeFraming } from "./framing";
-import { runAnalysis, listAllProviders, getLocalRomanizer } from "./providers/registry";
-import { ProviderError } from "./providers/types";
+import { runAnalysis, listAllProviders, getLocalRomanizer, getLocalEndChecker } from "./providers/registry";
+import { ANALYSIS_PROMPT_VERSION, ProviderError, type EndChecker } from "./providers/types";
 import {
   ensureAnalysisDir,
   analysisDir,
@@ -23,11 +23,10 @@ import {
 import type { Provider } from "./keystore";
 import { clipLengthRange, type ClipLengthPreset, type ClipLengthRange } from "./clipLength";
 import type { TranscriptSegment } from "./transcript";
-import { trimTrailingQuestion, fitToMaxLength, snapToSentences } from "./clipTrim";
+import { trimTrailingQuestion, fitToMaxLength, snapToSentences, endContext, snapToSilence } from "./clipTrim";
 
 export class AnalysisPipelineError extends Error {}
 
-const ANALYSIS_PROMPT_VERSION = "v1";
 // Picks this far under the chosen minimum are still kept (see validation.ts).
 const SHORT_TOLERANCE = 0.6;
 
@@ -136,9 +135,15 @@ export async function runModelAgainstAnalysis(
   try {
     const range = clipLengthRange(clipLength);
     const result = await runAnalysis(provider, model, analysis.transcript.segments, TARGET_CLIP_COUNT, range);
-    const clips = clampAndDedupe(result.clips, analysis.videoDurationSeconds ?? Infinity, range, analysis.transcript.segments).map(
-      (c): AnalysisClip => ({ ...c, id: randomUUID(), renderStatus: "pending" })
+    const picked = clampAndDedupe(result.clips, analysis.videoDurationSeconds ?? Infinity, range, analysis.transcript.segments);
+    const refined = await refineEdges(
+      picked,
+      range,
+      analysis.transcript.segments,
+      path.join(analysisDir(analysisId), "source.mp4"),
+      await getLocalEndChecker(provider, model)
     );
+    const clips = refined.map((c): AnalysisClip => ({ ...c, id: randomUUID(), renderStatus: "pending" }));
 
     updateRun(analysisId, run.id, {
       status: "done",
@@ -182,6 +187,47 @@ function clampAndDedupe<T extends { startSeconds: number; endSeconds: number; vi
   }
   kept.sort((a, b) => a.startSeconds - b.startSeconds);
   return kept;
+}
+
+/**
+ * Final pass on each clip's edges:
+ * 1. a local model checks the clip ends on a finished thought and may keep a
+ *    few more sentences (clips ended on a full sentence mid-point before);
+ * 2. both edges move into real pauses in the audio, since caption timings run
+ *    a second or two early and cut off the last words.
+ * A clip that would grow into its neighbour keeps its old end.
+ */
+async function refineEdges<T extends { startSeconds: number; endSeconds: number }>(
+  clips: T[],
+  range: ClipLengthRange,
+  segments: TranscriptSegment[],
+  sourcePath: string,
+  checkEnd: EndChecker | undefined
+): Promise<T[]> {
+  const out: T[] = [];
+  for (const [i, clip] of clips.entries()) {
+    let { startSeconds, endSeconds } = clip;
+    const nextStart = clips[i + 1]?.startSeconds ?? Infinity;
+    if (checkEnd) {
+      try {
+        const { inside, following } = endContext(startSeconds, endSeconds, segments);
+        const keep = following.length ? await checkEnd({ inside, following }) : 0;
+        const extended = keep > 0 ? following[keep - 1].end : endSeconds;
+        if (extended - startSeconds <= range.maxSeconds && extended < nextStart) endSeconds = extended;
+      } catch (err) {
+        console.error("[analysisPipeline] end check failed, keeping the clip's end:", err);
+      }
+    }
+    try {
+      const silences = await findSilences(sourcePath, startSeconds - 1, endSeconds + 4);
+      const snapped = snapToSilence(startSeconds, endSeconds, range.maxSeconds, silences);
+      if (snapped.endSeconds < nextStart) ({ startSeconds, endSeconds } = snapped);
+    } catch (err) {
+      console.error("[analysisPipeline] silence snap failed, keeping transcript edges:", err);
+    }
+    out.push({ ...clip, startSeconds, endSeconds });
+  }
+  return out;
 }
 
 const serveUrlCache = new Map<string, string>();

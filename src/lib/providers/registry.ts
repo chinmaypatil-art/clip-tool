@@ -4,11 +4,11 @@ import { geminiProvider } from "./gemini";
 import { openaiProvider } from "./openai";
 import { anthropicProvider } from "./anthropic";
 import { getEligibleKeys, advanceRotation, markRateLimited, markInvalid, recordUsage, listCustomProviders, listKeys, isLocalBaseUrl } from "../keystore";
-import { createOpenAICompatibleProvider, createOllamaRomanizer, isOllama } from "./openaiCompatible";
+import { createOpenAICompatibleProvider, createOllamaEndChecker, createOllamaRomanizer, isOllama } from "./openaiCompatible";
 import type { Romanizer } from "../whisper";
 import type { Provider } from "../keystore";
 import type { TranscriptSegment } from "../transcript";
-import type { AnalyzeResult } from "./types";
+import type { AnalyzeResult, EndChecker } from "./types";
 import type { ClipLengthRange } from "../clipLength";
 
 export const PROVIDERS: Record<string, ModelProvider> = {
@@ -149,4 +149,11 @@ export async function getLocalRomanizer(providerId: string, model: string): Prom
   const def = (await listCustomProviders()).find((p) => p.id === providerId);
   if (!def || !isOllama(def.baseUrl)) return undefined;
   return createOllamaRomanizer(def, model);
+}
+
+/** Local models also check that each clip ends on a finished thought. Undefined for cloud models. */
+export async function getLocalEndChecker(providerId: string, model: string): Promise<EndChecker | undefined> {
+  const def = (await listCustomProviders()).find((p) => p.id === providerId);
+  if (!def || !isOllama(def.baseUrl)) return undefined;
+  return createOllamaEndChecker(def, model);
 }

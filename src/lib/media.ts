@@ -292,3 +292,44 @@ export async function cutClip(
     );
   }
 }
+
+/**
+ * Pauses (at least `minSeconds` below -35 dB) in [fromSeconds, toSeconds) of a
+ * file's audio, in absolute seconds. Used to put clip edges where nobody is
+ * talking; transcript timings alone are a second or two off.
+ */
+export async function findSilences(
+  filePath: string,
+  fromSeconds: number,
+  toSeconds: number,
+  minSeconds = 0.25
+): Promise<Array<{ start: number; end: number }>> {
+  const from = Math.max(0, fromSeconds);
+  const { stderr } = await execFileAsync(getFfmpegPath(), [
+    "-hide_banner",
+    "-ss",
+    from.toFixed(2),
+    "-t",
+    Math.max(0.1, toSeconds - from).toFixed(2),
+    "-i",
+    filePath,
+    "-vn",
+    "-af",
+    `silencedetect=n=-35dB:d=${minSeconds}`,
+    "-f",
+    "null",
+    "-",
+  ]);
+  const silences: Array<{ start: number; end: number }> = [];
+  let open: number | null = null;
+  for (const m of stderr.matchAll(/silence_(start|end): (-?[\d.]+)/g)) {
+    const t = from + Math.max(0, parseFloat(m[2]));
+    if (m[1] === "start") open = t;
+    else if (open !== null) {
+      silences.push({ start: open, end: t });
+      open = null;
+    }
+  }
+  if (open !== null) silences.push({ start: open, end: toSeconds });
+  return silences;
+}

@@ -43,7 +43,7 @@ export function fitToMaxLength(
   return lineEnds.length ? Math.max(...lineEnds) : limit;
 }
 
-interface Sentence {
+export interface Sentence {
   start: number;
   end: number;
   text: string;
@@ -130,10 +130,13 @@ export function snapToSentences(
   let si = sentences.findIndex((s) => s.end > startSeconds + 0.3);
   if (si < 0) return { startSeconds, endSeconds };
   if (sentences[si].start < startSeconds - MAX_EDGE_SHIFT_SECONDS && si + 1 < sentences.length) si++;
+  // In a cased transcript a lowercase opener is a speaker resuming mid-thought
+  // after an interjection (">> of your separation…"), even across a turn.
+  const cased = sentences.some((s) => /^[A-Z]/.test(s.text));
+  const midThought = (s: Sentence) => (cased && /^[a-z]/.test(s.text)) || (DEPENDENT_OPENER.test(s.text) && !s.turn);
   while (
     si > 0 &&
-    DEPENDENT_OPENER.test(sentences[si].text) &&
-    !sentences[si].turn &&
+    midThought(sentences[si]) &&
     startSeconds - sentences[si - 1].start <= MAX_EDGE_SHIFT_SECONDS + 2
   ) {
     si--;
@@ -170,4 +173,54 @@ export function snapToSentences(
     startSeconds: Math.max(0, prevEnd, start - START_PAD_SECONDS),
     endSeconds: Math.min(nextStart, end + END_PAD_SECONDS_SOFT, start + maxSeconds),
   };
+}
+
+/** The clip's last few sentences and the ones right after it, for an end check. */
+export function endContext(
+  startSeconds: number,
+  endSeconds: number,
+  segments: TranscriptSegment[] | undefined,
+  before = 3,
+  after = 5
+): { inside: Sentence[]; following: Sentence[] } {
+  const sentences = segments?.length ? toSentences(segments) : [];
+  const inside = sentences.filter((s) => s.start >= startSeconds - 0.5 && s.start < endSeconds - 0.3);
+  const following = sentences.filter((s) => s.start >= endSeconds - 0.3).slice(0, after);
+  return { inside: inside.slice(-before), following };
+}
+
+export interface Silence {
+  start: number;
+  end: number;
+}
+
+// YouTube caption times run 1-2s ahead of the audio, so the real pause for an
+// edge is usually just after it.
+const START_SEARCH_AHEAD = 2.5;
+const END_SEARCH_AHEAD = 3;
+const END_SEARCH_BACK = 1;
+
+/**
+ * Moves each edge into the nearest following pause in the audio, so a clip
+ * never starts on the previous sentence's last word or ends before the
+ * speaker's last word. Edges with no pause nearby stay where they are.
+ */
+export function snapToSilence(
+  startSeconds: number,
+  endSeconds: number,
+  maxSeconds: number,
+  silences: Silence[]
+): { startSeconds: number; endSeconds: number } {
+  // The pause must begin near the edge: a pause after the first spoken word
+  // would otherwise drop that word.
+  const startGap = silences.find(
+    (s) => s.end > startSeconds - 0.3 && s.start <= startSeconds + 1.2 && s.end <= startSeconds + START_SEARCH_AHEAD
+  );
+  const start = startGap ? Math.max(startGap.start, startGap.end - Math.min(0.3, (startGap.end - startGap.start) / 2)) : startSeconds;
+  const endGap = silences.find(
+    (s) => s.end > endSeconds + 0.05 && s.start >= endSeconds - END_SEARCH_BACK && s.start <= endSeconds + END_SEARCH_AHEAD
+  );
+  const end = endGap ? endGap.start + Math.min(0.5, (endGap.end - endGap.start) / 2) : endSeconds;
+  if (end - start > maxSeconds || end - start < 3) return { startSeconds, endSeconds };
+  return { startSeconds: start, endSeconds: end };
 }

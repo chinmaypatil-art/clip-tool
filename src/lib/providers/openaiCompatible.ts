@@ -1,6 +1,6 @@
 import OpenAI, { AuthenticationError, PermissionDeniedError, RateLimitError } from "openai";
 import type { ModelProvider, AnalyzeResult } from "./types";
-import { buildAnalysisPrompt, parseNormalizedClips, ProviderError } from "./types";
+import { buildAnalysisPrompt, buildEndCheckPrompt, parseEndCheck, parseNormalizedClips, ProviderError, type EndChecker } from "./types";
 import type { CustomProviderDef } from "../keystore";
 import { romanizeInBatches } from "../gemini";
 
@@ -54,6 +54,8 @@ export function createOpenAICompatibleProvider(def: CustomProviderDef): ModelPro
 
 const isOllama = (baseUrl: string) => /:11434(\/|$)/.test(baseUrl);
 
+// One context size for every call: Ollama reloads the model whenever num_ctx
+// changes, which made each end check and caption batch wait ~40s.
 // Ollama's OpenAI-compatible endpoint silently truncates prompts to its small
 // default context window (a 38-min transcript is ~16k tokens), and there's no
 // way to raise it through that endpoint. Its native /api/chat takes num_ctx.
@@ -123,7 +125,7 @@ export function createOllamaRomanizer(def: CustomProviderDef, model: string): (w
             format: "json",
             stream: false,
             think: false,
-            options: { num_ctx: 8192, temperature: 0 },
+            options: { num_ctx: OLLAMA_NUM_CTX, temperature: 0 },
           }),
         });
         const body: { message?: { content?: string }; error?: string } = await res.json();
@@ -132,6 +134,28 @@ export function createOllamaRomanizer(def: CustomProviderDef, model: string): (w
       },
       def.label
     );
+}
+
+/** Asks a local Ollama model whether a clip's last line finishes the speaker's point. */
+export function createOllamaEndChecker(def: CustomProviderDef, model: string): EndChecker {
+  const nativeUrl = def.baseUrl.replace(/\/v1\/?$/, "") + "/api/chat";
+  return async ({ inside, following }) => {
+    const res = await fetch(nativeUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model,
+        messages: [{ role: "user", content: buildEndCheckPrompt(inside, following) }],
+        format: "json",
+        stream: false,
+        think: false,
+        options: { num_ctx: OLLAMA_NUM_CTX, temperature: 0 },
+      }),
+    });
+    const body: { message?: { content?: string }; error?: string } = await res.json();
+    if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
+    return parseEndCheck(body.message?.content ?? "", following.length);
+  };
 }
 
 export { isOllama };
