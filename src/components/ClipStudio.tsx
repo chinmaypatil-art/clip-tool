@@ -158,7 +158,7 @@ export default function ClipStudio() {
           Clip Studio
         </h1>
         <p className="mt-3 max-w-xl text-zinc-400">
-          Drop in a long-form video or link. Gemini finds the moments with the best hook
+          Drop in a long-form video or link. Gemma, running on this machine, finds the moments with the best hook
           potential, then renders them as ready-to-post 9:16 clips with captions.
         </p>
       </motion.header>

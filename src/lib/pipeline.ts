@@ -11,9 +11,11 @@ import {
   MediaError,
   CancelledError,
 } from "./media";
-import { uploadVideo, analyzeWindow, analyzeTranscript, rankCandidates, GeminiError, type RawCandidate } from "./gemini";
-import { extractYoutubeTranscript, TranscriptError } from "./transcript";
-import { validateClips } from "./validation";
+import { extractYoutubeTranscript, captionsToSegments, TranscriptError } from "./transcript";
+import { pickClips } from "./analysisPipeline";
+import { getLocalRomanizer } from "./providers/registry";
+import { ProviderError } from "./providers/types";
+import type { Provider } from "./keystore";
 import { createLimiter } from "./limit";
 import type { TranscriptSegment } from "./transcript";
 import { clipLengthRange, type ClipLengthPreset } from "./clipLength";
@@ -27,9 +29,12 @@ import { StageTimer } from "./timing";
 // be trustworthy as caption source — below this we fall back to Whisper
 // rather than show sparse/misleading captions.
 
-const WINDOW_SECONDS = 5 * 60; // 5-minute analysis windows
-const WINDOW_OVERLAP_SECONDS = 20; // avoid missing hooks that straddle a window boundary
-const TARGET_CLIP_COUNT = 5;
+// New Clip runs entirely on the local fine-tune target (picking and caption
+// romanization), so it needs no cloud API. Override for experiments.
+const CLIP_MODEL: { provider: Provider; model: string } = {
+  provider: process.env.CLIP_PROVIDER ?? "ollama-local",
+  model: process.env.CLIP_MODEL ?? "gemma3:12b",
+};
 
 export interface RunPipelineInput {
   jobId: string;
@@ -82,92 +87,58 @@ export async function runPipeline({ jobId, source, clipLength }: RunPipelineInpu
       throw new PipelineError("Video has no audio track — hook detection relies on spoken content.");
     }
 
+    // Transcript: YouTube's own captions when there are any, otherwise a
+    // full-video Whisper transcription.
     checkCancelled();
-    const allCandidates: Array<RawCandidate & { absoluteStart: number; absoluteEnd: number }> = [];
-    let usedTranscript = false;
-
-    // YouTube-specific fast path: YouTube's own captions give us an accurate,
-    // officially-sourced transcript for free — analyzing that text directly
-    // is faster and cheaper than uploading the whole video to Gemini and
-    // scanning it in windows. Falls back to the video-analysis path below if
-    // the video has no captions at all (never fabricates a transcript).
     let transcriptSegments: TranscriptSegment[] | undefined;
     if (source.kind === "url" && isYoutubeUrl(source.url)) {
       updateJob(jobId, { status: "analyzing", progressMessage: "Fetching YouTube transcript" });
       const transcriptDir = path.join(dir, "transcript-tmp");
       await mkdir(transcriptDir, { recursive: true });
       try {
-        const transcript = await timer.time("transcript_fetch", () =>
-          extractYoutubeTranscript(source.url, transcriptDir)
-        );
-        updateJob(jobId, {
-          progressMessage: `Analyzing transcript (${transcript.segments.length} segments, ${transcript.source} captions)`,
-        });
-        const candidates = await timer.time("analyze", () => analyzeTranscript(transcript.segments, TARGET_CLIP_COUNT, lengthRange));
-        for (const c of candidates) {
-          allCandidates.push({ ...c, absoluteStart: c.startSeconds, absoluteEnd: c.endSeconds });
-        }
-        usedTranscript = true;
+        const transcript = await timer.time("transcript_fetch", () => extractYoutubeTranscript(source.url, transcriptDir));
         transcriptSegments = transcript.segments;
       } catch (err) {
-        if (err instanceof TranscriptError) {
-          console.error(`[pipeline] transcript extraction failed, falling back to video analysis:`, err.message);
-        } else {
-          throw err;
-        }
+        if (!(err instanceof TranscriptError)) throw err;
+        console.error(`[pipeline] YouTube captions unavailable, falling back to Whisper:`, err.message);
       }
     }
-
-    if (!usedTranscript) {
+    if (!transcriptSegments) {
       checkCancelled();
-      updateJob(jobId, { status: "uploading", progressMessage: "Uploading video to Gemini for analysis" });
-      const geminiFile = await timer.time("upload", () => uploadVideo(sourcePath, "video/mp4"));
-
-      updateJob(jobId, { status: "analyzing", progressMessage: "Scanning video for hook moments" });
-      const windows = buildWindows(probe.durationSeconds);
-
-      for (let i = 0; i < windows.length; i++) {
-        checkCancelled();
-        const [windowStart, windowEnd] = windows[i];
-        updateJob(jobId, {
-          progressMessage: `Scanning for hooks… window ${i + 1}/${windows.length} (${Math.round(windowStart)}s-${Math.round(windowEnd)}s)`,
-        });
-        let candidates: RawCandidate[];
-        try {
-          candidates = await timer.time(`analyze_window_${i + 1}`, () => analyzeWindow(geminiFile, windowStart, windowEnd, lengthRange));
-        } catch (err) {
-          // One bad window shouldn't kill the whole job — log and continue.
-          console.error(`[pipeline] window [${windowStart}-${windowEnd}] analysis failed:`, err);
-          continue;
-        }
-        for (const c of candidates) {
-          allCandidates.push({
-            ...c,
-            absoluteStart: windowStart + c.startSeconds,
-            absoluteEnd: windowStart + c.endSeconds,
-          });
-        }
-      }
-    }
-
-    if (allCandidates.length === 0) {
-      throw new PipelineError(
-        "Gemini found no hook-worthy moments in this video. This can happen with low-energy content, poor audio, or very narrow subject matter."
-      );
+      updateJob(jobId, { status: "analyzing", progressMessage: "Transcribing the video" });
+      const wavPath = path.join(dir, "full-audio.wav");
+      const captions = await timer.time("transcribe", async () => {
+        await extractAudioSegment(sourcePath, wavPath, 0, probe.durationSeconds);
+        // Only the model reads this transcript, and it reads Devanagari fine.
+        return transcribeWav(wavPath, { romanizer: null });
+      });
+      await rm(wavPath, { force: true }).catch(() => {});
+      transcriptSegments = captionsToSegments(captions);
     }
 
     checkCancelled();
-    updateJob(jobId, { status: "ranking", progressMessage: `Ranking ${allCandidates.length} candidate moments` });
-    const ranked = await timer.time("rank", () => rankCandidates(allCandidates, TARGET_CLIP_COUNT, lengthRange));
-    const validated = validateClips(
-      ranked.map((r) => ({ ...r, startSeconds: r.startSeconds, endSeconds: r.endSeconds })),
-      probe.durationSeconds,
-      lengthRange,
-      transcriptSegments
+    updateJob(jobId, {
+      status: "ranking",
+      progressMessage: `Finding hook moments with ${CLIP_MODEL.model} (${transcriptSegments.length} transcript lines)`,
+    });
+    const picked = await timer.time("pick", () =>
+      pickClips({
+        ...CLIP_MODEL,
+        segments: transcriptSegments,
+        durationSeconds: probe.durationSeconds,
+        range: lengthRange,
+        sourcePath,
+      })
     );
-
+    const validated = picked.clips.map((c) => ({
+      startSeconds: c.startSeconds,
+      endSeconds: c.endSeconds,
+      title: c.title,
+      reason: c.reasoning,
+      score: c.viralScore,
+    }));
     if (validated.length === 0) {
-      throw new PipelineError("Gemini's picks did not pass validation (bad timestamps or clip lengths). Try again or use a different video.");
+      throw new PipelineError(`${CLIP_MODEL.model} found no clips that fit the chosen length. Try another length or video.`);
     }
 
     updateJob(jobId, { status: "cutting", progressMessage: `Preparing render pipeline for ${validated.length} clips` });
@@ -224,7 +195,7 @@ export async function runPipeline({ jobId, source, clipLength }: RunPipelineInpu
           // videos it's often an English translation, not what was said.
           const captions = await timer.time(`captions_${i + 1}`, async () => {
             await extractAudioSegment(segmentPath, wavPath, 0, clipLength);
-            return transcribeWav(wavPath);
+            return transcribeWav(wavPath, { romanizer: await getLocalRomanizer(CLIP_MODEL.provider, CLIP_MODEL.model) });
           });
           captionPages = createTikTokStyleCaptions({
             captions,
@@ -340,7 +311,8 @@ export async function runPipeline({ jobId, source, clipLength }: RunPipelineInpu
     const message =
       err instanceof PipelineError ||
       err instanceof MediaError ||
-      err instanceof GeminiError ||
+      err instanceof ProviderError ||
+      err instanceof TranscriptError ||
       err instanceof WhisperError ||
       err instanceof RenderError
         ? err.message
@@ -354,14 +326,3 @@ export async function runPipeline({ jobId, source, clipLength }: RunPipelineInpu
 
 class PipelineError extends Error {}
 
-function buildWindows(durationSeconds: number): Array<[number, number]> {
-  const windows: Array<[number, number]> = [];
-  let start = 0;
-  while (start < durationSeconds) {
-    const end = Math.min(start + WINDOW_SECONDS, durationSeconds);
-    windows.push([start, end]);
-    if (end >= durationSeconds) break;
-    start = end - WINDOW_OVERLAP_SECONDS;
-  }
-  return windows;
-}

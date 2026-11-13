@@ -133,17 +133,15 @@ export async function runModelAgainstAnalysis(
   addRun(analysisId, run);
 
   try {
-    const range = clipLengthRange(clipLength);
-    const result = await runAnalysis(provider, model, analysis.transcript.segments, TARGET_CLIP_COUNT, range);
-    const picked = clampAndDedupe(result.clips, analysis.videoDurationSeconds ?? Infinity, range, analysis.transcript.segments);
-    const refined = await refineEdges(
-      picked,
-      range,
-      analysis.transcript.segments,
-      path.join(analysisDir(analysisId), "source.mp4"),
-      await getLocalEndChecker(provider, model)
-    );
-    const clips = refined.map((c): AnalysisClip => ({ ...c, id: randomUUID(), renderStatus: "pending" }));
+    const result = await pickClips({
+      provider,
+      model,
+      segments: analysis.transcript.segments,
+      durationSeconds: analysis.videoDurationSeconds ?? Infinity,
+      range: clipLengthRange(clipLength),
+      sourcePath: path.join(analysisDir(analysisId), "source.mp4"),
+    });
+    const clips = result.clips.map((c): AnalysisClip => ({ ...c, id: randomUUID(), renderStatus: "pending" }));
 
     updateRun(analysisId, run.id, {
       status: "done",
@@ -160,6 +158,32 @@ export async function runModelAgainstAnalysis(
     console.error(`[analysisPipeline] model run failed (${provider}/${model}) for ${analysisId}: ${message}`);
     updateRun(analysisId, run.id, { status: "error", finishedAt: Date.now(), error: message });
   }
+}
+
+/**
+ * Has a model pick clips from a transcript, then cleans them up: length
+ * limits, overlaps, whole sentences, a finished thought at the end (local
+ * models) and cuts in real pauses. Shared by Compare and New Clip.
+ */
+export async function pickClips({
+  provider,
+  model,
+  segments,
+  durationSeconds,
+  range,
+  sourcePath,
+}: {
+  provider: Provider;
+  model: string;
+  segments: TranscriptSegment[];
+  durationSeconds: number;
+  range: ClipLengthRange;
+  sourcePath: string;
+}) {
+  const result = await runAnalysis(provider, model, segments, TARGET_CLIP_COUNT, range);
+  const picked = clampAndDedupe(result.clips, durationSeconds, range, segments);
+  const clips = await refineEdges(picked, range, segments, sourcePath, await getLocalEndChecker(provider, model));
+  return { ...result, clips };
 }
 
 function clampAndDedupe<T extends { startSeconds: number; endSeconds: number; viralScore: number }>(

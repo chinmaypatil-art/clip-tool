@@ -19,7 +19,7 @@ video (upload or YouTube link)
 ```
 
 Two screens:
-- **New Clip**: the end-to-end pipeline (Gemini).
+- **New Clip**: the end-to-end pipeline, run entirely on local Gemma 3 12B (Ollama).
 - **Compare**: runs several models on the same transcript side by side, so we
   can judge which model picks the best clips. Users can add any
   OpenAI-compatible provider (Groq, OpenRouter, Ollama, ...) under Keys.
@@ -59,7 +59,8 @@ app go to Keys → add the "Ollama (local)" preset → Load models. No API key i
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `GEMINI_API_KEY` | — | Gemini key for New Clip |
+| `GEMINI_API_KEY` | — | Gemini key (Compare benchmark only) |
+| `CLIP_PROVIDER` / `CLIP_MODEL` | `ollama-local` / `gemma3:12b` | Model New Clip uses |
 | `GEMINI_MODEL` | `gemini-2.5-flash` | Main Gemini model |
 | `GEMINI_FALLBACK_MODEL` | `gemini-2.5-flash` | Used after repeated 503s |
 | `KEY_STORE_SECRET` | — | Encrypts API keys saved from the Keys page |
