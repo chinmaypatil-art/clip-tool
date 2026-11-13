@@ -94,7 +94,26 @@ function overlapRatio(a: AnalysisClip, b: AnalysisClip): number {
   return union > 0 ? inter / union : 0;
 }
 
-const RUN_COLORS = ["#a78bfa", "#60a5fa", "#34d399", "#f472b6", "#fbbf24", "#fb7185"];
+const OPEN_ANALYSIS_KEY = "compare.openAnalysisId";
+
+// Storage can be unavailable (private mode, blocked site data); the page
+// still works then, it just won't reopen the analysis after a tab switch.
+function openAnalysisId(): string | null {
+  try {
+    return localStorage.getItem(OPEN_ANALYSIS_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function rememberOpenAnalysis(id: string | null): void {
+  try {
+    if (id) localStorage.setItem(OPEN_ANALYSIS_KEY, id);
+    else localStorage.removeItem(OPEN_ANALYSIS_KEY);
+  } catch {}
+}
+
+const RUN_COLORS =["#a78bfa", "#60a5fa", "#34d399", "#f472b6", "#fbbf24", "#fb7185"];
 
 export default function Compare() {
   const [url, setUrl] = useState("");
@@ -139,9 +158,17 @@ export default function Compare() {
   }, []);
 
   const poll = useCallback((id: string) => {
+    rememberOpenAnalysis(id);
     if (pollRef.current) clearInterval(pollRef.current);
     pollRef.current = setInterval(async () => {
       const res = await fetch(`/api/analyses/${id}`);
+      if (res.status === 404) {
+        // Deleted elsewhere: stop polling it and don't reopen it next time.
+        if (pollRef.current) clearInterval(pollRef.current);
+        rememberOpenAnalysis(null);
+        setAnalysis(null);
+        return;
+      }
       if (!res.ok) return;
       const data: Analysis = await res.json();
       setAnalysis(data);
@@ -159,6 +186,20 @@ export default function Compare() {
       if (pollRef.current) clearInterval(pollRef.current);
     };
   }, []);
+
+  // Switching tabs unmounts this component; reopen the analysis that was open
+  // instead of showing an empty page while its runs continue on the server.
+  useEffect(() => {
+    const id = openAnalysisId();
+    if (!id) return;
+    fetch(`/api/analyses/${id}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data: Analysis | null) => {
+        if (!data) return rememberOpenAnalysis(null);
+        setAnalysis(data);
+        poll(id);
+      });
+  }, [poll]);
 
   const handleSubmit = useCallback(async () => {
     setSubmitError(null);
@@ -379,6 +420,7 @@ export default function Compare() {
             <button
               onClick={() => {
                 if (pollRef.current) clearInterval(pollRef.current);
+                rememberOpenAnalysis(null);
                 setAnalysis(null);
                 setSelected(new Set());
               }}
