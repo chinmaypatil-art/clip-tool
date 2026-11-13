@@ -13,7 +13,7 @@ import {
 } from "./types";
 import type { CustomProviderDef } from "../keystore";
 import { romanizeInBatches } from "../gemini";
-import { buildTranscriptWindows } from "../transcriptWindows";
+import { buildTranscriptWindows, pickWindowSeconds } from "../transcriptWindows";
 
 /**
  * Builds a provider for any service that speaks the OpenAI chat-completions
@@ -234,8 +234,7 @@ export function createOllamaWindowedPicker(def: CustomProviderDef, model: string
   return async ({ segments, targetCount, range }) => {
     const start = Date.now();
     usage = { inputTokens: 0, outputTokens: 0 };
-    // A window must hold a max-length clip with room to place it.
-    const windows = buildTranscriptWindows(segments, Math.max(90, range.maxSeconds * 1.5));
+    const windows = buildTranscriptWindows(segments, pickWindowSeconds(range));
 
     const scores = new Map<string, number>();
     for (let b = 0; b < windows.length; b += SCORE_BATCH) {

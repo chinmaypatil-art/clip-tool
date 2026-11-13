@@ -8,6 +8,11 @@ export interface TranscriptWindow {
   segments: TranscriptSegment[];
 }
 
+/** Window length for picking: it must hold a max-length clip with room to place it. */
+export function pickWindowSeconds(range: { maxSeconds: number }): number {
+  return Math.max(90, range.maxSeconds * 1.5);
+}
+
 /**
  * Splits a transcript into overlapping windows on line boundaries, so a model
  * reads a few minutes at a time. Asked for picks over a whole long transcript
