@@ -154,7 +154,7 @@ export function createOllamaEndChecker(def: CustomProviderDef, model: string): E
     });
     const body: { message?: { content?: string }; error?: string } = await res.json();
     if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
-    return parseEndCheck(body.message?.content ?? "", following.length);
+    return parseEndCheck(body.message?.content ?? "", inside.length, following.length);
   };
 }
 

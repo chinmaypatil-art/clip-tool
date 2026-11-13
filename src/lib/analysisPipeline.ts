@@ -220,8 +220,9 @@ function clampAndDedupe<T extends { startSeconds: number; endSeconds: number; vi
 
 /**
  * Final pass on each clip's edges:
- * 1. a local model checks the clip ends on a finished thought and may keep a
- *    few more sentences (clips ended on a full sentence mid-point before);
+ * 1. a local model checks the clip ends where the point lands: it may keep a
+ *    few more sentences, or end earlier when the clip drifts into another
+ *    topic (an early end is made up with setup before it, not padding after);
  * 2. both edges move into real pauses in the audio, since caption timings run
  *    a second or two early and cut off the last words.
  * A clip that would grow into its neighbour keeps its old end.
@@ -240,9 +241,19 @@ async function refineEdges<T extends { startSeconds: number; endSeconds: number 
     if (checkEnd) {
       try {
         const { inside, following } = endContext(startSeconds, endSeconds, segments);
-        const keep = following.length ? await checkEnd({ inside, following }) : 0;
-        const extended = keep > 0 ? following[keep - 1].end : endSeconds;
-        if (extended - startSeconds <= range.maxSeconds && extended < nextStart) endSeconds = extended;
+        const endAfter = inside.length ? await checkEnd({ inside, following }) : 0;
+        const newEnd =
+          endAfter > 0 ? following[endAfter - 1].end : endAfter < 0 ? inside[inside.length - 1 + endAfter].end : endSeconds;
+        if (newEnd > startSeconds + 3 && newEnd - startSeconds <= range.maxSeconds && newEnd < nextStart) {
+          endSeconds = newEnd;
+          if (endSeconds - startSeconds < range.minSeconds) {
+            // Ended early: reach the minimum with setup before it, never more after.
+            const grown = reachMinLength(startSeconds, endSeconds, range.minSeconds, endSeconds);
+            const prevEnd = out[out.length - 1]?.endSeconds ?? 0;
+            const snappedStart = snapToSentences(grown.startSeconds, endSeconds, range.maxSeconds, segments).startSeconds;
+            startSeconds = Math.max(prevEnd, Math.min(grown.startSeconds, snappedStart));
+          }
+        }
       } catch (err) {
         console.error("[analysisPipeline] end check failed, keeping the clip's end:", err);
       }

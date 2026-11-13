@@ -13,6 +13,7 @@ export const REJECT_REASONS = {
   boring: "Not interesting",
   needs_context: "Needs earlier context",
   duplicate: "Duplicate of another clip",
+  promo: "Includes a promo (like/share/subscribe, ad)",
 } as const;
 
 export type RejectReason = keyof typeof REJECT_REASONS;

@@ -53,7 +53,7 @@ export interface ModelProvider {
   }): Promise<AnalyzeResult>;
 }
 
-export const ANALYSIS_PROMPT_VERSION = "v2";
+export const ANALYSIS_PROMPT_VERSION = "v3";
 
 /** Same instructions for every provider/model — required for a fair comparison. */
 export function buildAnalysisPrompt(segments: TranscriptSegment[], targetCount: number, range: ClipLengthRange): string {
@@ -75,6 +75,7 @@ Find exactly ${targetCount} candidate clips for short-form content (Reels/Shorts
 - For interviews/podcasts: start the clip on the interviewer's question or setup line, not mid-answer, so the viewer sees both people and gets the context.
 - End the clip only once the speaker has FINISHED their point: the last line must land the payoff/conclusion, not stop mid-explanation or mid-story. Right after that line, stop — NEVER include the start of the next question, a new topic, or a transition line. If the moment is shorter than the range, add setup context BEFORE it, never extra lines after it.
 - Has genuine substance — not filler or someone trailing off.
+- Never includes channel promotion: asking viewers to like, share, subscribe, follow or comment, or a sponsor/ad read.
 
 Pick clips spread across the video rather than clustering in one stretch, and make sure none of them overlap in time.
 
@@ -136,28 +137,32 @@ export interface EndCheckInput {
   following: Array<{ text: string; turn: boolean }>;
 }
 
-/** How many of the following sentences the clip should keep (0 = it ends right). */
+/**
+ * The line the clip should end after: 0 = its current last line, negative =
+ * an earlier line inside the clip (the point finished sooner), positive = one
+ * of the following lines (the point needs them).
+ */
 export type EndChecker = (input: EndCheckInput) => Promise<number>;
 
 export function buildEndCheckPrompt(inside: EndCheckInput["inside"], following: EndCheckInput["following"]): string {
-  const close = inside.map((s) => `  ${s.text}`).join("\n");
+  const close = inside.map((s, i) => `  [${i - inside.length + 1}] ${s.text}`).join("\n");
   const next = following.map((s, i) => `  [${i + 1}]${s.turn ? " (other speaker)" : ""} ${s.text}`).join("\n");
-  return `You are editing a short vertical clip cut from a podcast. The clip currently ENDS with these lines:
+  return `You are editing a short vertical clip cut from a podcast. The last lines of the clip, ending with line [0]:
 ${close}
 
 In the full video, these lines come right after the cut:
 ${next}
 
-Does the clip end where the speaker has finished their point, or does the thought continue?
-- If the point is complete, answer 0.
-- If the next lines finish the same thought (the conclusion, the punchline, the rest of the sentence or story), answer the number of the LAST line needed to complete it.
-- Never include a new question, a new topic or a transition.
+After which line has the speaker finished their point?
+- [0] if the clip already ends right where the point lands.
+- An earlier line ([-1], [-2], ...) if the point was already finished there and the lines after it drift into something else: a new topic, a side story, a promo (like/share/subscribe), small talk.
+- A later line ([1], [2], ...) if those lines complete the same thought (the conclusion, the punchline, the rest of the story). Never a new question or a new topic.
 
-Return ONLY JSON: {"keep": number}`;
+Return ONLY JSON: {"end_after": number}`;
 }
 
-export function parseEndCheck(jsonText: string, available: number): number {
+export function parseEndCheck(jsonText: string, before: number, after: number): number {
   const stripped = jsonText.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/i, "");
-  const keep = Number((JSON.parse(stripped) as { keep?: unknown })?.keep);
-  return Number.isFinite(keep) ? Math.max(0, Math.min(available, Math.round(keep))) : 0;
+  const n = Number((JSON.parse(stripped) as { end_after?: unknown })?.end_after);
+  return Number.isFinite(n) ? Math.max(-(before - 1), Math.min(after, Math.round(n))) : 0;
 }

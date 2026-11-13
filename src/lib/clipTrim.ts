@@ -69,6 +69,9 @@ const END_PAD_SECONDS_SOFT = 0.6;
  */
 export function toSentences(segments: TranscriptSegment[]): Sentence[] {
   const sentences: Sentence[] = [];
+  // Hindi auto-captions have no punctuation at all; there each caption line
+  // is the only boundary we have, so it ends a "sentence".
+  const punctuated = segments.some((s) => /[.?!…।]/.test(s.text));
   let open: Sentence | null = null;
   for (const seg of segments) {
     const text = seg.text.replace(/&gt;/g, ">").replace(/\s+/g, " ").trim();
@@ -76,7 +79,7 @@ export function toSentences(segments: TranscriptSegment[]): Sentence[] {
     const startS = seg.startMs / 1000;
     const span = Math.max(0, seg.endMs / 1000 - startS);
     // Pieces end at . ? ! or right before a ">>" speaker change.
-    const pieces = text.split(/(?<=[.?!…])\s+|\s*(?=>>)/).filter((p) => p.trim());
+    const pieces = text.split(/(?<=[.?!…।])\s+|\s*(?=>>)/).filter((p) => p.trim());
     let offset = 0;
     for (const raw of pieces) {
       const at = text.indexOf(raw, offset);
@@ -97,10 +100,14 @@ export function toSentences(segments: TranscriptSegment[]): Sentence[] {
       } else {
         open = { start: pStart, end: pEnd, text: piece, turn };
       }
-      if (/[.?!…]$/.test(piece)) {
+      if (/[.?!…।]$/.test(piece)) {
         sentences.push(open);
         open = null;
       }
+    }
+    if (!punctuated && open) {
+      sentences.push(open);
+      open = null;
     }
   }
   if (open) sentences.push(open);
@@ -180,7 +187,7 @@ export function endContext(
   startSeconds: number,
   endSeconds: number,
   segments: TranscriptSegment[] | undefined,
-  before = 3,
+  before = 4,
   after = 5
 ): { inside: Sentence[]; following: Sentence[] } {
   const sentences = segments?.length ? toSentences(segments) : [];
