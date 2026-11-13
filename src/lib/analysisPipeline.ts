@@ -280,7 +280,12 @@ async function refineEdges<T extends { startSeconds: number; endSeconds: number 
       }
     }
     try {
-      const silences = await findSilences(sourcePath, startSeconds - 1, endSeconds + 4);
+      // Only the audio around each edge matters, not the whole clip.
+      const [head, tail] = await Promise.all([
+        findSilences(sourcePath, startSeconds - 1, startSeconds + 3),
+        findSilences(sourcePath, endSeconds - 2, endSeconds + 4),
+      ]);
+      const silences = [...head, ...tail];
       const snapped = snapToSilence(startSeconds, endSeconds, range, silences);
       if (snapped.endSeconds < nextStart) ({ startSeconds, endSeconds } = snapped);
     } catch (err) {

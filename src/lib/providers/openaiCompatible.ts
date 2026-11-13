@@ -164,7 +164,7 @@ export function createOllamaEndChecker(def: CustomProviderDef, model: string): E
         format: "json",
         stream: false,
         think: false,
-        options: { num_ctx: OLLAMA_NUM_CTX, temperature: 0 },
+        options: { num_ctx: OLLAMA_NUM_CTX, num_predict: 64, temperature: 0 },
       }),
     });
     const body: { message?: { content?: string }; error?: string } = await res.json();
@@ -180,7 +180,7 @@ const SCORE_BATCH = 3;
 // tokens. gemma3:12b sometimes loops on one token until Ollama aborts the
 // call ("token repeat limit reached"), which took 8.5 min once.
 const SCORE_MAX_TOKENS = 512;
-const CLIPS_MAX_TOKENS = 2048;
+const CLIPS_MAX_TOKENS = 1024;
 
 /**
  * Picks clips in two passes, as openshorts does: score few-minute windows of

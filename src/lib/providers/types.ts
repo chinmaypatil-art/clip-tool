@@ -85,6 +85,21 @@ Return ONLY valid JSON matching this exact shape:
 {"clips": [{"start_time": number, "end_time": number, "title": string, "hook": string, "description": string, "reasoning": string, "viral_score": number, "category": string, "engagement_potential": string}, ...]}`;
 }
 
+// Local models write every output token slowly; the full field set made
+// picking take minutes. Missing fields default to "" in parseNormalizedClips.
+function leanClipFields(): string {
+  return `- start_time: absolute seconds in the video (matching the transcript's own timestamps)
+- end_time: absolute seconds in the video
+- title: short punchy working title, 10 words max
+- hook: the opening line that grabs attention, 12 words max
+- description: what happens in this clip, ONE short sentence
+- viral_score: 0-100
+- category: a short content category label (e.g. "personal story", "hot take", "advice", "humor")
+
+Return ONLY valid JSON matching this exact shape:
+{"clips": [{"start_time": number, "end_time": number, "title": string, "hook": string, "description": string, "viral_score": number, "category": string}, ...]}`;
+}
+
 /** Same instructions for every provider/model — required for a fair comparison. */
 export function buildAnalysisPrompt(segments: TranscriptSegment[], targetCount: number, range: ClipLengthRange): string {
   return `You are an expert short-form video editor who finds viral clip-worthy moments inside long-form video/podcast/interview content, working from a TIMESTAMPED TRANSCRIPT (you cannot see the video itself).
@@ -142,8 +157,8 @@ ${formatTranscript(segments)}
 Find 1 or 2 clips for short-form content (Reels/Shorts/TikTok) inside this excerpt. Return 2 only if they are genuinely different moments that do not overlap; return none only if nothing here is worth publishing. Every clip must start and end inside ${from.toFixed(1)}s-${to.toFixed(1)}s. A good clip:
 ${clipRules(range)}
 
-For each clip, return ALL of these fields:
-${clipFields()}`;
+For each clip, return ALL of these fields (keep them short; this runs on a small local model):
+${leanClipFields()}`;
 }
 
 export function parseNormalizedClips(jsonText: string): NormalizedClip[] {
