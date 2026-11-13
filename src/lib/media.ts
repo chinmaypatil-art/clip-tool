@@ -86,8 +86,10 @@ export async function downloadVideo(
       [
         url,
         // Cap at 1080p: clips never need more, and 4K sources are many times larger.
+        // Prefer H.264: Remotion's decoder intermittently lost frames seeking
+        // in YouTube's VP9 ("No frame found at position"), failing renders.
         "-f",
-        "bv*[height<=1080][ext=mp4]+ba[ext=m4a]/b[height<=1080][ext=mp4]/bv*[height<=1080]+ba/b[height<=1080]/b",
+        "bv*[height<=1080][vcodec^=avc1]+ba[ext=m4a]/bv*[height<=1080][ext=mp4]+ba[ext=m4a]/b[height<=1080][ext=mp4]/bv*[height<=1080]+ba/b[height<=1080]/b",
         // Fetch DASH/HLS fragments in parallel instead of one at a time.
         "--concurrent-fragments",
         "8",
