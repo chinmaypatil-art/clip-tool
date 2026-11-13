@@ -51,6 +51,7 @@ export async function runTranscriptExtraction(
     } else {
       await copyFile(source.path, sourcePath);
     }
+    updateAnalysis(analysisId, { downloadedAt: Date.now() });
 
     const probe = await probeVideo(sourcePath);
     if (probe.durationSeconds < 30) {
@@ -64,6 +65,7 @@ export async function runTranscriptExtraction(
         const transcript = await extractYoutubeTranscript(source.url, transcriptDir);
         updateAnalysis(analysisId, {
           status: "ready",
+          transcriptReadyAt: Date.now(),
           transcript: { segments: transcript.segments, language: transcript.language, source: transcript.source },
         });
         return;
@@ -84,6 +86,7 @@ export async function runTranscriptExtraction(
     const segments = captionsToSegments(captions);
     updateAnalysis(analysisId, {
       status: "ready",
+      transcriptReadyAt: Date.now(),
       transcript: { segments, language: "en", source: "whisper" },
     });
   } catch (err) {
@@ -276,7 +279,12 @@ export async function renderAnalysisClip(analysisId: string, runId: string, clip
   const clip = run?.clips.find((c) => c.id === clipId);
   if (!analysis || !run || !clip) throw new AnalysisPipelineError("Clip not found.");
 
-  updateRunClip(analysisId, runId, clipId, { renderStatus: "rendering" });
+  updateRunClip(analysisId, runId, clipId, {
+    renderStatus: "rendering",
+    renderQueuedAt: Date.now(),
+    renderStartedAt: undefined,
+    renderFinishedAt: undefined,
+  });
   // A reviewer may change the edges while this renders; render what was asked.
   const { startSeconds, endSeconds } = clip;
 
@@ -319,12 +327,14 @@ export async function renderAnalysisClip(analysisId: string, runId: string, clip
       title: clip.title,
       captionPages,
       framing: await framingPromise,
+      onStart: () => updateRunClip(analysisId, runId, clipId, { renderStartedAt: Date.now() }),
     });
 
     await captureThumbnail(outPath, path.join(dir, thumbFilename), clipLength);
 
     updateRunClip(analysisId, runId, clipId, {
       renderStatus: "done",
+      renderFinishedAt: Date.now(),
       renderedStartSeconds: startSeconds,
       renderedEndSeconds: endSeconds,
       renderFilename: filename,

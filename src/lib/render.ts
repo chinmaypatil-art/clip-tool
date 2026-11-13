@@ -65,10 +65,13 @@ export interface RenderClipInput {
   /** Per-shot crop from analyzeFraming(); empty letterboxes the whole clip. */
   framing: FramingSegment[];
   onProgress?: (progress: number) => void;
+  /** Called when this clip leaves the render queue and starts rendering. */
+  onStart?: () => void;
 }
 
 export function renderClip(input: RenderClipInput): Promise<void> {
   return renderSlot(async () => {
+    input.onStart?.();
     try {
       await renderClipNow(input);
     } catch (err) {

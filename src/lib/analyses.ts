@@ -25,6 +25,11 @@ export interface AnalysisClip extends NormalizedClip {
   renderFilename?: string;
   renderThumbnailFilename?: string;
   renderError?: string;
+  /** Render button pressed; renders run one at a time, so it may wait in a queue. */
+  renderQueuedAt?: number;
+  /** Rendering itself began (after the queue). */
+  renderStartedAt?: number;
+  renderFinishedAt?: number;
 }
 
 export interface ModelRun {
@@ -54,6 +59,9 @@ export interface Analysis {
   error: string | null;
   createdAt: number;
   updatedAt: number;
+  /** Stage timestamps (ms) for timing reports. */
+  downloadedAt?: number;
+  transcriptReadyAt?: number;
   videoDurationSeconds: number | null;
   transcript: { segments: TranscriptSegment[]; language: string; source: string } | null;
   runs: ModelRun[];
