@@ -250,7 +250,7 @@ export function createOllamaWindowedPicker(def: CustomProviderDef, model: string
     // Unscored windows rank last but stay in play; ties keep video order.
     const shortlist = [...windows]
       .sort((a, b) => (scores.get(b.id) ?? -1) - (scores.get(a.id) ?? -1))
-      .slice(0, Math.min(windows.length, targetCount + 2))
+      .slice(0, Math.min(windows.length, targetCount))
       .sort((a, b) => a.startSeconds - b.startSeconds);
 
     const clips: NormalizedClip[] = [];
@@ -266,7 +266,10 @@ export function createOllamaWindowedPicker(def: CustomProviderDef, model: string
         0.4
       );
       raw.push({ window: `${w.id} ${w.startSeconds.toFixed(0)}-${w.endSeconds.toFixed(0)}s`, score: scores.get(w.id) ?? null, response: text });
-      clips.push(...(found ?? []));
+      // A clip ranks by its window too: gemma rates nearly every clip 75-85, and
+      // on that alone the early windows crowded out the rest of the video.
+      const windowScore = scores.get(w.id);
+      for (const c of found ?? []) clips.push(windowScore === undefined ? c : { ...c, viralScore: Math.round((c.viralScore + windowScore) / 2) });
     }
     if (!clips.length) throw new ProviderError(`${def.label} found no clips in any window.`, "other");
     return { clips, rawResponse: raw, tokenUsage: { ...usage }, durationMs: Date.now() - start };
