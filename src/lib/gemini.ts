@@ -467,7 +467,8 @@ const ROMANIZE_BATCH = 80; // short lists keep the model from merging/skipping i
 export async function romanizeInBatches(
   words: string[],
   ask: (prompt: string) => Promise<string>,
-  label: string
+  label: string,
+  reference?: string
 ): Promise<Array<string | null>> {
   const result: Array<string | null> = words.map(() => null);
   const batches: number[] = [];
@@ -483,6 +484,13 @@ Rewrite each word in Latin script the way Indians write Hinglish in Instagram/Yo
 - English words written in Devanagari: normal English spelling ("क्रिएटर्स" -> "creators", "मॉडल्स" -> "models").
 - Words already in Latin script: keep them; only drop stray accents ("bäťe" -> "baithe") and fix clearly broken Hinglish spellings.
 - Keep punctuation attached to its word. Never translate.
+${
+        reference
+          ? `- The speech recognizer sometimes mishears a word ("ignay se hubhu" for "ekdam se hoobahoo"). The video's own captions for this stretch are below; where a numbered word is clearly a mishearing of a word there, write the captions' word instead. They may be a translation, so never copy words that weren't said, and keep one output word per number.
+  Captions: ${reference}
+`
+          : ""
+      }
 
 Return JSON {"words": [{"i": <number>, "text": <word>}, ...]} with one object for every number below.
 
@@ -507,7 +515,7 @@ ${batch.map((w, k) => `${k}: ${w}`).join("\n")}`;
   return result;
 }
 
-export async function romanizeHinglishWords(words: string[]): Promise<Array<string | null>> {
+export async function romanizeHinglishWords(words: string[], reference?: string): Promise<Array<string | null>> {
   const ai = getClient();
   return romanizeInBatches(
     words,
@@ -519,7 +527,8 @@ export async function romanizeHinglishWords(words: string[]): Promise<Array<stri
       });
       return response.text ?? "";
     },
-    "gemini"
+    "gemini",
+    reference
   );
 }
 

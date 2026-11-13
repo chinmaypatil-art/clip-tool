@@ -3,7 +3,7 @@ import { copyFile, rm } from "fs/promises";
 import { createTikTokStyleCaptions } from "@remotion/captions";
 import { randomUUID } from "crypto";
 import { downloadVideo, probeVideo, extractAudioSegment, captureThumbnail, cutClip, findSilences, isYoutubeUrl, isUrl, MediaError } from "./media";
-import { extractYoutubeTranscript, captionsToSegments, TranscriptError } from "./transcript";
+import { extractYoutubeTranscript, captionsToSegments, referenceText, TranscriptError } from "./transcript";
 import { transcribeWav, WhisperError } from "./whisper";
 import { bundleForJob, renderClip, RenderError } from "./render";
 import { analyzeFraming } from "./framing";
@@ -324,7 +324,10 @@ export async function renderAnalysisClip(analysisId: string, runId: string, clip
     let captionPages: ReturnType<typeof createTikTokStyleCaptions>["pages"] = [];
     try {
       await extractAudioSegment(sourcePath, wavPath, startSeconds, clipLength);
-      const captions = await transcribeWav(wavPath, { romanizer: await getLocalRomanizer(run.provider, run.model) });
+      const captions = await transcribeWav(wavPath, {
+        romanizer: await getLocalRomanizer(run.provider, run.model),
+        reference: referenceText(analysis.transcript?.segments, startSeconds, startSeconds + clipLength),
+      });
       captionPages = createTikTokStyleCaptions({ captions, combineTokensWithinMilliseconds: 1200 }).pages;
     } catch (err) {
       console.error(`[analysisPipeline] caption generation failed for ${analysisId}/${runId}/${clipId}:`, err);

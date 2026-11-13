@@ -386,14 +386,14 @@ function stripAccents(text: string): string {
 }
 
 /** Turns caption words into romanised Hinglish; null entries fall back to rule-based transliteration. */
-export type Romanizer = (words: string[]) => Promise<Array<string | null>>;
+export type Romanizer = (words: string[], reference?: string) => Promise<Array<string | null>>;
 
 /** Rewrites Devanagari (and accented Latin) words as Hinglish in Latin script, keeping one caption — and its timing — per word. */
-async function romanize(captions: Caption[], romanizer: Romanizer): Promise<Caption[]> {
+async function romanize(captions: Caption[], romanizer: Romanizer, reference?: string): Promise<Caption[]> {
   if (!captions.some((c) => hasDevanagari(c.text) || ACCENTED_LATIN.test(c.text))) return captions;
   let latin: Array<string | null>;
   try {
-    latin = await romanizer(captions.map((c) => c.text.trim()));
+    latin = await romanizer(captions.map((c) => c.text.trim()), reference);
   } catch (err) {
     console.error("[whisper] romanization failed, using rule-based transliteration:", describeError(err));
     latin = captions.map(() => null);
@@ -409,10 +409,12 @@ async function romanize(captions: Caption[], romanizer: Romanizer): Promise<Capt
 /**
  * Transcribes an already-16kHz-mono WAV file with word-level timestamps.
  * Use `extractAudioSegment` from `./media` to produce a compliant WAV first.
+ * `reference` is the video's own caption text for the same stretch; the
+ * romanizer uses it to correct words whisper misheard.
  */
 export async function transcribeWav(
   wavPath: string,
-  { romanizer = romanizeHinglishWords }: { romanizer?: Romanizer | null } = {}
+  { romanizer = romanizeHinglishWords, reference }: { romanizer?: Romanizer | null; reference?: string } = {}
 ): Promise<Caption[]> {
   try {
     let language = LANGUAGE_OVERRIDE ?? "hi";
@@ -428,7 +430,7 @@ export async function transcribeWav(
     const prompt = hinglish ? HINGLISH_PROMPT : null;
     const words = await transcribeWords(wavPath, language as Language, prompt);
     const complete = await fillGaps(wavPath, words, language as Language, prompt);
-    return hinglish && romanizer ? await romanize(complete, romanizer) : complete;
+    return hinglish && romanizer ? await romanize(complete, romanizer, reference) : complete;
   } catch (err) {
     throw new WhisperError(`whisper.cpp transcription failed for "${wavPath}": ${describeError(err)}`, err);
   }
@@ -444,7 +446,10 @@ function mergeSubwordTokens(captions: Caption[]): Caption[] {
   const merged: Caption[] = [];
   for (const c of captions) {
     const prev = merged[merged.length - 1];
-    if (prev && !/^\s/.test(c.text)) {
+    // A Devanagari piece never continues a Latin word or the other way round
+    // ("reader" + "को" became "readerko").
+    const scriptChange = prev && hasDevanagari(c.text) !== hasDevanagari(prev.text.slice(-1));
+    if (prev && !/^\s/.test(c.text) && !scriptChange) {
       merged[merged.length - 1] = {
         ...prev,
         text: prev.text + c.text,
@@ -452,7 +457,8 @@ function mergeSubwordTokens(captions: Caption[]): Caption[] {
         confidence: prev.confidence === null || c.confidence === null ? null : Math.min(prev.confidence, c.confidence),
       };
     } else {
-      merged.push(c);
+      // The leading space makes it its own word in the caption pages.
+      merged.push(scriptChange && !/^\s/.test(c.text) ? { ...c, text: " " + c.text } : c);
     }
   }
   return merged;

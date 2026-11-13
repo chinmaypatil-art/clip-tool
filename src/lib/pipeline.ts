@@ -11,7 +11,7 @@ import {
   MediaError,
   CancelledError,
 } from "./media";
-import { extractYoutubeTranscript, captionsToSegments, TranscriptError } from "./transcript";
+import { extractYoutubeTranscript, captionsToSegments, referenceText, TranscriptError } from "./transcript";
 import { pickClips } from "./analysisPipeline";
 import { getLocalRomanizer } from "./providers/registry";
 import { ProviderError } from "./providers/types";
@@ -195,7 +195,10 @@ export async function runPipeline({ jobId, source, clipLength }: RunPipelineInpu
           // videos it's often an English translation, not what was said.
           const captions = await timer.time(`captions_${i + 1}`, async () => {
             await extractAudioSegment(segmentPath, wavPath, 0, clipLength);
-            return transcribeWav(wavPath, { romanizer: await getLocalRomanizer(CLIP_MODEL.provider, CLIP_MODEL.model) });
+            return transcribeWav(wavPath, {
+              romanizer: await getLocalRomanizer(CLIP_MODEL.provider, CLIP_MODEL.model),
+              reference: referenceText(transcriptSegments, v.startSeconds, v.endSeconds),
+            });
           });
           captionPages = createTikTokStyleCaptions({
             captions,

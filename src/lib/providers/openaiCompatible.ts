@@ -110,9 +110,12 @@ async function analyzeWithOllama(def: CustomProviderDef, model: string, prompt: 
 }
 
 /** Romanizes caption words with the same local Ollama model that picked the clips, so rendering needs no cloud API. */
-export function createOllamaRomanizer(def: CustomProviderDef, model: string): (words: string[]) => Promise<Array<string | null>> {
+export function createOllamaRomanizer(
+  def: CustomProviderDef,
+  model: string
+): (words: string[], reference?: string) => Promise<Array<string | null>> {
   const nativeUrl = def.baseUrl.replace(/\/v1\/?$/, "") + "/api/chat";
-  return (words) =>
+  return (words, reference) =>
     romanizeInBatches(
       words,
       async (prompt) => {
@@ -132,7 +135,8 @@ export function createOllamaRomanizer(def: CustomProviderDef, model: string): (w
         if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
         return body.message?.content ?? "";
       },
-      def.label
+      def.label,
+      reference
     );
 }
 

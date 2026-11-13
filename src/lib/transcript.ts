@@ -404,3 +404,14 @@ export function captionsToSegments(captions: Array<{ text: string; startMs: numb
     .filter((t) => t.text.length > 0);
   return bucketTokensIntoSegments(tokens);
 }
+
+/** The transcript's text for a stretch of the video, as a spelling reference for clip captions. */
+export function referenceText(segments: TranscriptSegment[] | undefined, startSeconds: number, endSeconds: number): string | undefined {
+  const text = (segments ?? [])
+    .filter((s) => s.endMs / 1000 > startSeconds && s.startMs / 1000 < endSeconds)
+    .map((s) => s.text.replace(/&gt;/g, ">").replace(/>>/g, "").trim())
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return text || undefined;
+}
