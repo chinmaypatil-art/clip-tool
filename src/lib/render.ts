@@ -68,7 +68,17 @@ export interface RenderClipInput {
 }
 
 export function renderClip(input: RenderClipInput): Promise<void> {
-  return renderSlot(() => renderClipNow(input));
+  return renderSlot(async () => {
+    try {
+      await renderClipNow(input);
+    } catch (err) {
+      // Remotion's frame extractor occasionally dies mid-render ("Request
+      // closed" / "No frame found"); the same clip renders fine on a second
+      // try, so retry once before reporting an error.
+      console.warn(`[render] retrying "${input.outputPath}" after: ${describeError(err)}`);
+      await renderClipNow(input);
+    }
+  });
 }
 
 async function renderClipNow(input: RenderClipInput): Promise<void> {
