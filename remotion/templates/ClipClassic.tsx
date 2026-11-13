@@ -74,7 +74,8 @@ export const ClipClassic: React.FC<ClipTemplateProps> = ({
   const shot = framing.find((s) => t >= s.fromSeconds && t < s.toSeconds) ?? framing[framing.length - 1];
   const fill = shot?.mode === "fill";
   const split = shot?.mode === "split" && shot.people?.length === 2 && shot.sourceAspect ? shot : null;
-  const src = staticFile(videoFileName);
+  // An http(s) URL is used as-is (Compare renders a pre-cut segment served by the app).
+  const src = videoFileName.startsWith("http") ? videoFileName : staticFile(videoFileName);
 
   return (
     <AbsoluteFill

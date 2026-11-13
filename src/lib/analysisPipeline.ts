@@ -2,7 +2,7 @@ import path from "path";
 import { copyFile, rm } from "fs/promises";
 import { createTikTokStyleCaptions } from "@remotion/captions";
 import { randomUUID } from "crypto";
-import { downloadVideo, probeVideo, extractAudioSegment, captureThumbnail, findSilences, isYoutubeUrl, isUrl, MediaError } from "./media";
+import { downloadVideo, probeVideo, extractAudioSegment, captureThumbnail, cutClip, findSilences, isYoutubeUrl, isUrl, MediaError } from "./media";
 import { extractYoutubeTranscript, captionsToSegments, TranscriptError } from "./transcript";
 import { transcribeWav, WhisperError } from "./whisper";
 import { bundleForJob, renderClip, RenderError } from "./render";
@@ -261,6 +261,13 @@ async function refineEdges<T extends { startSeconds: number; endSeconds: number 
 
 const serveUrlCache = new Map<string, string>();
 
+/** The short cut of the source a clip renders from (served by the files route). */
+export function segmentFilename(runId: string, clipId: string): string {
+  return `segment-${runId}-${clipId}.mp4`;
+}
+
+const APP_ORIGIN = `http://127.0.0.1:${process.env.PORT ?? 3000}`;
+
 /**
  * Deletes the Remotion bundle made for an analysis. Bundling copies the whole
  * analysis folder (source video included) into a temp directory, so this
@@ -318,17 +325,25 @@ export async function renderAnalysisClip(analysisId: string, runId: string, clip
       serveUrlCache.set(analysisId, serveUrl);
     }
 
+    // Render from a short ffmpeg cut, not the full source: seeking deep into a
+    // long video made Remotion fail with "No frame found at position" (twice
+    // in a row, so the retry didn't help). The bundle is a snapshot of the
+    // folder, so the cut is fetched over HTTP from the app instead.
+    const segment = segmentFilename(runId, clip.id);
+    const segmentPath = path.join(dir, segment);
+    await cutClip(sourcePath, segmentPath, startSeconds, endSeconds);
+
     await renderClip({
       serveUrl,
       outputPath: outPath,
-      videoFileName: "source.mp4",
-      trimStartSeconds: startSeconds,
+      videoFileName: `${APP_ORIGIN}/api/analyses/${analysisId}/files/${segment}`,
+      trimStartSeconds: 0,
       durationSeconds: clipLength,
       title: clip.title,
       captionPages,
       framing: await framingPromise,
       onStart: () => updateRunClip(analysisId, runId, clipId, { renderStartedAt: Date.now() }),
-    });
+    }).finally(() => rm(segmentPath, { force: true }).catch(() => {}));
 
     await captureThumbnail(outPath, path.join(dir, thumbFilename), clipLength);
 

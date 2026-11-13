@@ -4,6 +4,7 @@ import { stat } from "fs/promises";
 import { createReadStream } from "fs";
 import { Readable } from "stream";
 import { loadAnalysis, analysisDir } from "@/lib/analyses";
+import { segmentFilename } from "@/lib/analysisPipeline";
 
 export async function GET(
   _req: NextRequest,
@@ -19,7 +20,7 @@ export async function GET(
   let isThumbnail = false;
   const match = analysis.runs.some((run) =>
     run.clips.some((clip) => {
-      if (clip.renderFilename === filename) return true;
+      if (clip.renderFilename === filename || segmentFilename(run.id, clip.id) === filename) return true;
       if (clip.renderThumbnailFilename === filename) {
         isThumbnail = true;
         return true;
