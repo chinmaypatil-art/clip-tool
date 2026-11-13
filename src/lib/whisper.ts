@@ -212,10 +212,34 @@ async function runWhisper(device: Device, wavPath: string, language: Language, p
     // -sow: with --max-len 1 (set by tokenLevelTimestamps) every item becomes a
     // whole word instead of a BPE sub-word piece. Passed raw because Remotion's
     // splitOnWord option appends a value that whisper-cli reads as an input file.
-    additionalArgs: ["-sow", "-t", String(THREADS), ...(prompt ? ["--prompt", prompt] : [])],
+    // -nfa: whisper.cpp 1.8 turns flash attention on by default, which silently
+    // disables the --dtw word alignment that tokenLevelTimestamps asks for.
+    additionalArgs: ["-sow", "-nfa", "-t", String(THREADS), ...(prompt ? ["--prompt", prompt] : [])],
     printOutput: process.env.WHISPER_VERBOSE === "1",
   });
-  return mergeSubwordTokens(toCaptions({ whisperCppOutput: output }).captions);
+  return alignedStarts(mergeSubwordTokens(toCaptions({ whisperCppOutput: output }).captions));
+}
+
+// DTW onsets measured 0.1-0.3s after the audio onset; a caption that shows a
+// beat early reads better than one that lags.
+const DTW_LEAD_MS = 150;
+
+/**
+ * Starts each word at its DTW-aligned time. Whisper's own token offsets were
+ * up to 1.25s off the audio (captions visibly out of sync); DTW was within
+ * 0.3s on the same clip.
+ */
+function alignedStarts(captions: Caption[]): Caption[] {
+  let prevStart = 0;
+  return captions.map((c) => {
+    if (c.timestampMs === null) {
+      prevStart = Math.max(prevStart, c.startMs);
+      return c;
+    }
+    const startMs = Math.max(prevStart, c.timestampMs - DTW_LEAD_MS, 0);
+    prevStart = startMs;
+    return { ...c, startMs, endMs: Math.max(c.endMs, startMs + 250) };
+  });
 }
 
 function transcribeWords(wavPath: string, language: Language, prompt: string | null): Promise<Caption[]> {
