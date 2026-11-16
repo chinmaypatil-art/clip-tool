@@ -2,7 +2,9 @@ import path from "path";
 import { copyFile, rm } from "fs/promises";
 import { createTikTokStyleCaptions } from "@remotion/captions";
 import { randomUUID } from "crypto";
-import { downloadVideo, probeVideo, extractAudioSegment, captureThumbnail, cutClip, findSilences, isYoutubeUrl, isUrl, MediaError } from "./media";
+import { createLimiter } from "./limit";
+import { parseCaptionStyle, WORDS_COMBINE_MS } from "./captionStyle";
+import { fetchVideoTitle, downloadVideo, probeVideo, extractAudioSegment, captureThumbnail, cutClip, findSilences, isYoutubeUrl, isUrl, MediaError } from "./media";
 import { extractYoutubeTranscript, captionsToSegments, referenceText, TranscriptError } from "./transcript";
 import { transcribeWav, WhisperError } from "./whisper";
 import { bundleForJob, renderClip, RenderError } from "./render";
@@ -111,6 +113,36 @@ export async function runTranscriptExtraction(
 }
 
 const TARGET_CLIP_COUNT = 5;
+
+/** The model the one-click flow picks clips with. */
+export const CLIP_PICKER = {
+  provider: (process.env.CLIP_PROVIDER ?? "ollama-local") as Provider,
+  model: process.env.CLIP_MODEL ?? "gemma3:12b",
+};
+
+/**
+ * The one-click flow: video in, rendered clips out. Transcript, then the
+ * local model picks clips, then every clip renders. Two clips are in flight at
+ * once, so one clip's captions are made while the other renders.
+ */
+export async function makeClips(
+  analysisId: string,
+  source: { kind: "url"; url: string } | { kind: "file"; path: string }
+): Promise<void> {
+  if (source.kind === "url") {
+    void fetchVideoTitle(source.url).then((title) => title && updateAnalysis(analysisId, { title }));
+  }
+  await runTranscriptExtraction(analysisId, source);
+  const analysis = getAnalysis(analysisId);
+  if (analysis?.status !== "ready") return;
+
+  await runModelAgainstAnalysis(analysisId, CLIP_PICKER.provider, CLIP_PICKER.model, analysis.clipLength);
+  const run = getAnalysis(analysisId)?.runs.at(-1);
+  if (run?.status !== "done") return;
+
+  const inFlight = createLimiter(2);
+  await Promise.all(run.clips.map((clip) => inFlight(() => renderAnalysisClip(analysisId, run.id, clip.id))));
+}
 
 /** Runs one provider/model against an analysis's already-extracted transcript. */
 export async function runModelAgainstAnalysis(
@@ -360,23 +392,35 @@ export async function renderAnalysisClip(analysisId: string, runId: string, clip
       return [];
     });
 
+    // Older analyses have no setting and keep the default captions.
+    const captionStyle = analysis.captionStyle === null ? null : parseCaptionStyle(analysis.captionStyle);
     let captionPages: ReturnType<typeof createTikTokStyleCaptions>["pages"] = [];
     try {
-      await extractAudioSegment(sourcePath, wavPath, startSeconds, clipLength);
-      const captions = await transcribeWav(wavPath, {
-        romanizer: await getLocalRomanizer(run.provider, run.model),
-        reference: referenceText(analysis.transcript?.segments, startSeconds, startSeconds + clipLength),
-      });
-      captionPages = createTikTokStyleCaptions({ captions, combineTokensWithinMilliseconds: 1200 }).pages;
+      if (captionStyle) {
+        await extractAudioSegment(sourcePath, wavPath, startSeconds, clipLength);
+        const captions = await transcribeWav(wavPath, {
+          romanizer: await getLocalRomanizer(run.provider, run.model),
+          reference: referenceText(analysis.transcript?.segments, startSeconds, startSeconds + clipLength),
+        });
+        captionPages = createTikTokStyleCaptions({
+          captions,
+          combineTokensWithinMilliseconds: WORDS_COMBINE_MS[captionStyle.words],
+        }).pages;
+      }
     } catch (err) {
       console.error(`[analysisPipeline] caption generation failed for ${analysisId}/${runId}/${clipId}:`, err);
     }
 
-    let serveUrl = serveUrlCache.get(analysisId);
-    if (!serveUrl) {
-      serveUrl = await bundleForJob(dir);
-      serveUrlCache.set(analysisId, serveUrl);
-    }
+    // Bundling copies the whole folder, source included: only do it when the
+    // ffmpeg renderer fails and Remotion is needed.
+    const serveUrl = async () => {
+      let url = serveUrlCache.get(analysisId);
+      if (!url) {
+        url = await bundleForJob(dir);
+        serveUrlCache.set(analysisId, url);
+      }
+      return url;
+    };
 
     // Render from a short ffmpeg cut, not the full source: seeking deep into a
     // long video made Remotion fail with "No frame found at position" (twice
@@ -394,6 +438,7 @@ export async function renderAnalysisClip(analysisId: string, runId: string, clip
       durationSeconds: clipLength,
       title: clip.title,
       captionPages,
+      captionStyle,
       framing: await framingPromise,
       segmentPath,
       onStart: () => updateRunClip(analysisId, runId, clipId, { renderStartedAt: Date.now() }),

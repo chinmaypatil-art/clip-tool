@@ -1,7 +1,7 @@
 # Clip Tool
 
 Upload a long video (Hindi / English / Hinglish podcast or interview) and get
-short vertical 9:16 clips with a strong chance of going viral, in about 20–25
+short vertical 9:16 clips with a strong chance of going viral, in about 8–10
 minutes. All processing runs on the server, so users only need a browser.
 Everything uses free-tier or local tools; no paid AI models.
 
@@ -15,18 +15,22 @@ video (upload or YouTube link)
   → per clip:
       captions      Whisper on the clip audio, word-level, Hinglish romanized
       framing       face detection (ONNX) → fill / fit / split (2 people stacked)
-      render        Remotion → 1080x1920 MP4 with animated captions
+      render        ffmpeg (crop filters + ASS captions, NVENC) → 1080x1920 MP4;
+                    Remotion as the fallback
 ```
 
-Two screens:
-- **New Clip**: the end-to-end pipeline, run entirely on local Gemma 3 12B (Ollama).
-- **Compare**: runs several models on the same transcript side by side, so we
-  can judge which model picks the best clips. Users can add any
-  OpenAI-compatible provider (Groq, OpenRouter, Ollama, ...) under Keys.
+The app is one flow: paste a link or upload a video, choose the clip length
+and caption style (or captions off), and the server picks and renders 5 clips
+with local Gemma 3 12B (Ollama). Each clip shows where it sits in the source
+(clickable for YouTube), can be downloaded, and has the review panel below.
+**Library** lists every video with its clips.
+
+The model workbench (Compare, API keys, the old New Clip screen) is hidden
+from the app but still at **/lab**, for benchmarks.
 
 ## Reviewing clips (training data)
 
-Every clip in Compare has a review panel: Good / Bad, a reason tag for bad
+Every clip has a review panel: Good / Bad, a reason tag for bad
 clips, and arrows that move the start or end one whole sentence. Saving a
 review rebuilds `storage/training/`:
 

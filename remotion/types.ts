@@ -50,6 +50,20 @@ export const clipTemplateSchema = z.object({
   captionPages: z.array(tikTokPageSchema),
   /** Per-shot framing; empty means letterbox the whole clip. */
   framing: z.array(framingSegmentSchema).default([]),
+  /** See src/lib/captionStyle.ts; null hides captions, absent uses the default. */
+  captionStyle: z
+    .object({
+      font: z.string(),
+      size: z.string(),
+      color: z.string(),
+      highlight: z.string().nullable(),
+      background: z.string(),
+      position: z.string(),
+      uppercase: z.boolean(),
+      words: z.string(),
+    })
+    .nullable()
+    .optional(),
 });
 
 export type ClipTemplateProps = z.input<typeof clipTemplateSchema>;

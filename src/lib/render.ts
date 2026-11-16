@@ -6,6 +6,7 @@ import type { FramingSegment } from "../../remotion/types";
 import { createLimiter } from "./limit";
 import { processSingleton } from "./processState";
 import { renderClipFfmpeg } from "./ffmpegRender";
+import type { CaptionStyle } from "./captionStyle";
 
 export class RenderError extends Error {
   constructor(message: string, public readonly cause?: unknown) {
@@ -60,7 +61,8 @@ export async function bundleForJob(jobDir: string): Promise<string> {
 }
 
 export interface RenderClipInput {
-  serveUrl: string;
+  /** The Remotion bundle, or a function making it (only called if Remotion runs). */
+  serveUrl: string | (() => Promise<string>);
   outputPath: string;
   videoFileName: string;
   trimStartSeconds: number;
@@ -69,6 +71,8 @@ export interface RenderClipInput {
   captionPages: TikTokPage[];
   /** Per-shot crop from analyzeFraming(); empty letterboxes the whole clip. */
   framing: FramingSegment[];
+  /** null renders no captions; undefined uses the default style. */
+  captionStyle?: CaptionStyle | null;
   onProgress?: (progress: number) => void;
   /** Called when this clip leaves the render queue and starts rendering. */
   onStart?: () => void;
@@ -107,15 +111,17 @@ async function renderClipNow(input: RenderClipInput): Promise<void> {
     durationSeconds: input.durationSeconds,
     title: input.title,
     captionPages: input.captionPages,
+    captionStyle: input.captionStyle,
     framing: input.framing,
   };
 
+  const serveUrl = typeof input.serveUrl === "string" ? input.serveUrl : await input.serveUrl();
   const puppeteerInstance = await ensureBrowser();
 
   let composition;
   try {
     composition = await selectComposition({
-      serveUrl: input.serveUrl,
+      serveUrl,
       id: COMPOSITION_ID,
       inputProps,
       puppeteerInstance,
@@ -127,7 +133,7 @@ async function renderClipNow(input: RenderClipInput): Promise<void> {
   try {
     await renderMedia({
       composition,
-      serveUrl: input.serveUrl,
+      serveUrl,
       codec: "h264",
       // Default x264 preset is "medium"; veryfast encodes several times
       // quicker at a slightly larger file — visually identical at 1080x1920.

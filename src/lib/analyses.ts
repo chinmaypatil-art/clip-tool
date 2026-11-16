@@ -7,6 +7,7 @@ import type { NormalizedClip } from "./providers/types";
 import type { Provider } from "./keystore";
 import type { ClipLengthPreset } from "./clipLength";
 import type { ClipReview } from "./review";
+import type { CaptionStyle } from "./captionStyle";
 
 export type AnalysisStatus = "extracting_transcript" | "ready" | "error";
 export type RunStatus = "queued" | "running" | "done" | "error";
@@ -69,6 +70,13 @@ export interface Analysis {
   sourceDeleted?: boolean;
   /** Removed from history, but its reviews are kept as training data. */
   archived?: boolean;
+  /** The video's own title (YouTube) or the uploaded file's name. */
+  title?: string;
+  /** Made by the one-click flow (link in, clips out) rather than Compare. */
+  oneClick?: boolean;
+  clipLength?: ClipLengthPreset;
+  /** Caption look for this video's renders; null renders no captions. */
+  captionStyle?: CaptionStyle | null;
 }
 
 const analyses = processSingleton("analyses", () => new Map<string, Analysis>());

@@ -61,6 +61,7 @@ export const ClipClassic: React.FC<ClipTemplateProps> = ({
   durationSeconds,
   captionPages,
   framing = [],
+  captionStyle,
 }) => {
   const { fps } = useVideoConfig();
   const frame = useCurrentFrame();
@@ -112,7 +113,7 @@ export const ClipClassic: React.FC<ClipTemplateProps> = ({
           }}
         />
       )}
-      <CaptionsOverlay pages={captionPages} />
+      {captionStyle !== null && <CaptionsOverlay pages={captionPages} captionStyle={captionStyle} />}
     </AbsoluteFill>
   );
 };

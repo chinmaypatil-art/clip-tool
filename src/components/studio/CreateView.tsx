@@ -1,0 +1,229 @@
+"use client";
+
+import { useEffect, useRef, useState } from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import { ArrowRight, ChevronDown, Film, Link2, Loader2, Upload, X } from "lucide-react";
+import { CLIP_LENGTH_PRESETS, DEFAULT_CLIP_LENGTH, type ClipLengthPreset } from "@/lib/clipLength";
+import { DEFAULT_CAPTION_STYLE, parseCaptionStyle, type CaptionStyle } from "@/lib/captionStyle";
+import { CaptionStylePicker } from "./CaptionStylePicker";
+import { cn } from "./format";
+
+const SETTINGS_KEY = "clip-settings";
+
+interface Settings {
+  clipLength: ClipLengthPreset;
+  captions: boolean;
+  captionStyle: CaptionStyle;
+}
+
+function loadSettings(): Settings {
+  const fallback = { clipLength: DEFAULT_CLIP_LENGTH, captions: true, captionStyle: DEFAULT_CAPTION_STYLE };
+  try {
+    const raw = JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? "null");
+    if (!raw) return fallback;
+    return {
+      clipLength: raw.clipLength in CLIP_LENGTH_PRESETS ? raw.clipLength : fallback.clipLength,
+      captions: raw.captions !== false,
+      captionStyle: parseCaptionStyle(raw.captionStyle),
+    };
+  } catch {
+    return fallback;
+  }
+}
+
+/** Link or upload in, plus the few choices that matter; everything else is automatic. */
+export function CreateView({ onStarted }: { onStarted: (analysisId: string) => void }) {
+  const [url, setUrl] = useState("");
+  const [file, setFile] = useState<File | null>(null);
+  const [dragging, setDragging] = useState(false);
+  const [settings, setSettings] = useState<Settings>({ clipLength: DEFAULT_CLIP_LENGTH, captions: true, captionStyle: DEFAULT_CAPTION_STYLE });
+  const [styleOpen, setStyleOpen] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
+
+  // Remember the last choices; read after mount so server and client HTML match.
+  // eslint-disable-next-line react-hooks/set-state-in-effect
+  useEffect(() => setSettings(loadSettings()), []);
+  const update = (patch: Partial<Settings>) =>
+    setSettings((prev) => {
+      const next = { ...prev, ...patch };
+      try {
+        localStorage.setItem(SETTINGS_KEY, JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+
+  const ready = Boolean(file) || /^https?:\/\/\S+$/i.test(url.trim());
+
+  const submit = async () => {
+    if (!ready || submitting) return;
+    setSubmitting(true);
+    setError(null);
+    try {
+      const body = { oneClick: true, ...settings };
+      let res: Response;
+      if (file) {
+        const form = new FormData();
+        form.append("file", file);
+        form.append("oneClick", "1");
+        form.append("settings", JSON.stringify(body));
+        res = await fetch("/api/analyses", { method: "POST", body: form });
+      } else {
+        res = await fetch("/api/analyses", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ...body, url: url.trim() }),
+        });
+      }
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data?.analysisId) throw new Error(data?.error ?? "Couldn't start. Try again.");
+      setUrl("");
+      setFile(null);
+      onStarted(data.analysisId);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="mx-auto max-w-2xl px-4 pb-24 pt-16 sm:pt-24">
+      <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="mb-10 text-center">
+        <h1 className="text-3xl font-semibold tracking-tight text-white sm:text-4xl">Turn a podcast into clips</h1>
+        <p className="mt-3 text-sm text-zinc-500">Paste a link or drop a video. You get 5 vertical clips with captions.</p>
+      </motion.div>
+
+      <div
+        onDragOver={(e) => {
+          e.preventDefault();
+          setDragging(true);
+        }}
+        onDragLeave={() => setDragging(false)}
+        onDrop={(e) => {
+          e.preventDefault();
+          setDragging(false);
+          const f = e.dataTransfer.files?.[0];
+          if (f) setFile(f);
+        }}
+        className={cn(
+          "rounded-2xl border bg-white/[0.03] p-2 transition",
+          dragging ? "border-white/50 bg-white/[0.07]" : "border-white/10 focus-within:border-white/25"
+        )}
+      >
+        <div className="flex items-center gap-2">
+          {file ? (
+            <div className="flex min-w-0 flex-1 items-center gap-2.5 px-3 py-2.5">
+              <Film size={16} className="shrink-0 text-zinc-400" />
+              <span className="truncate text-sm text-zinc-200">{file.name}</span>
+              <span className="shrink-0 text-xs text-zinc-500">{(file.size / 1e6).toFixed(0)} MB</span>
+              <button onClick={() => setFile(null)} className="ml-auto rounded p-1 text-zinc-500 hover:text-zinc-200" title="Remove">
+                <X size={14} />
+              </button>
+            </div>
+          ) : (
+            <label className="flex min-w-0 flex-1 items-center gap-2.5 px-3">
+              <Link2 size={16} className="shrink-0 text-zinc-500" />
+              <input
+                value={url}
+                onChange={(e) => setUrl(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && submit()}
+                placeholder="Paste a YouTube link…"
+                className="w-full bg-transparent py-2.5 text-sm text-zinc-100 placeholder:text-zinc-600 focus:outline-none"
+              />
+            </label>
+          )}
+          {!file && (
+            <button
+              onClick={() => fileInput.current?.click()}
+              className="flex shrink-0 items-center gap-1.5 rounded-xl px-3 py-2.5 text-sm text-zinc-400 transition hover:bg-white/5 hover:text-zinc-200"
+              title="Upload a video file"
+            >
+              <Upload size={15} /> <span className="hidden sm:inline">Upload</span>
+            </button>
+          )}
+          <button
+            onClick={submit}
+            disabled={!ready || submitting}
+            className="flex shrink-0 items-center gap-1.5 rounded-xl bg-white px-4 py-2.5 text-sm font-medium text-zinc-900 transition hover:bg-zinc-200 disabled:opacity-30"
+          >
+            {submitting ? <Loader2 size={15} className="animate-spin" /> : <ArrowRight size={15} />}
+            Make clips
+          </button>
+          <input
+            ref={fileInput}
+            type="file"
+            accept="video/*,audio/*"
+            className="hidden"
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) setFile(f);
+              e.target.value = "";
+            }}
+          />
+        </div>
+      </div>
+      {error && <p className="mt-3 text-center text-sm text-red-400">{error}</p>}
+
+      <div className="mt-6 flex flex-wrap items-center justify-center gap-x-6 gap-y-3 text-sm">
+        <div className="flex items-center gap-2">
+          <span className="text-zinc-500">Length</span>
+          <div className="flex rounded-lg bg-white/[0.04] p-0.5">
+            {(Object.entries(CLIP_LENGTH_PRESETS) as [ClipLengthPreset, (typeof CLIP_LENGTH_PRESETS)[ClipLengthPreset]][]).map(([key, p]) => (
+              <button
+                key={key}
+                onClick={() => update({ clipLength: key })}
+                className={cn(
+                  "rounded-md px-2.5 py-1 text-xs transition",
+                  settings.clipLength === key ? "bg-white/10 text-white" : "text-zinc-500 hover:text-zinc-300"
+                )}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="text-zinc-500">Captions</span>
+          <button
+            role="switch"
+            aria-checked={settings.captions}
+            onClick={() => update({ captions: !settings.captions })}
+            className={cn("relative h-5 w-9 rounded-full transition", settings.captions ? "bg-white" : "bg-white/15")}
+          >
+            <span
+              className={cn(
+                "absolute top-0.5 h-4 w-4 rounded-full transition-all",
+                settings.captions ? "left-[18px] bg-zinc-900" : "left-0.5 bg-zinc-400"
+              )}
+            />
+          </button>
+        </div>
+        {settings.captions && (
+          <button
+            onClick={() => setStyleOpen((o) => !o)}
+            className="flex items-center gap-1 text-xs text-zinc-400 transition hover:text-zinc-200"
+          >
+            Style <ChevronDown size={13} className={cn("transition", styleOpen && "rotate-180")} />
+          </button>
+        )}
+      </div>
+
+      <AnimatePresence initial={false}>
+        {settings.captions && styleOpen && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            className="overflow-hidden"
+          >
+            <div className="mt-6 rounded-2xl border border-white/10 bg-white/[0.02] p-5">
+              <CaptionStylePicker style={settings.captionStyle} onChange={(captionStyle) => update({ captionStyle })} />
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}

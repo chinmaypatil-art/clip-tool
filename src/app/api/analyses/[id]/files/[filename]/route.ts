@@ -7,7 +7,7 @@ import { loadAnalysis, analysisDir } from "@/lib/analyses";
 import { segmentFilename } from "@/lib/analysisPipeline";
 
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string; filename: string }> }
 ) {
   const { id, filename } = await params;
@@ -39,7 +39,15 @@ export async function GET(
     headers: {
       "Content-Type": isThumbnail ? "image/jpeg" : "video/mp4",
       "Content-Length": String(stats.size),
-      "Content-Disposition": `inline; filename="${filename}"`,
+      "Content-Disposition": dispositionFor(req, filename),
     },
   });
+}
+
+/** ?download=<name> saves the file as "<name>.mp4" instead of playing it. */
+function dispositionFor(req: NextRequest, filename: string): string {
+  const name = new URL(req.url).searchParams.get("download");
+  if (!name) return `inline; filename="${filename}"`;
+  const safe = name.replace(/[^\w\s.-]/g, "").trim().slice(0, 80) || "clip";
+  return `attachment; filename="${safe}.mp4"; filename*=UTF-8''${encodeURIComponent(name.slice(0, 80))}.mp4`;
 }

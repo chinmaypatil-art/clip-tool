@@ -66,6 +66,19 @@ export function isYoutubeUrl(input: string): boolean {
  * podcast/audio links, etc. — anything yt-dlp supports) to a local mp4.
  * Spotify is explicitly unsupported (DRM-protected; yt-dlp cannot fetch it).
  */
+/** The video's title from yt-dlp, or null if it can't be read. */
+export async function fetchVideoTitle(url: string): Promise<string | null> {
+  try {
+    const { stdout } = await execFileAsync(getYtDlpPath(), ["--print", "title", "--skip-download", "--no-playlist", url], {
+      windowsHide: true,
+      timeout: 30_000,
+    });
+    return stdout.trim().split(/\r?\n/)[0] || null;
+  } catch {
+    return null;
+  }
+}
+
 export async function downloadVideo(
   url: string,
   outPath: string,
