@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { Check, ChevronLeft, ChevronRight, Loader2, RotateCcw, ThumbsDown, ThumbsUp } from "lucide-react";
 import { toSentences } from "@/lib/clipTrim";
-import { REJECT_REASONS, type ClipReview, type RejectReason } from "@/lib/review";
+import { REJECT_REASONS, isGoodReason, isRejectReason, type ClipReview, type ReviewReason } from "@/lib/review";
 import type { TranscriptSegment } from "@/lib/transcript";
 
 export interface ReviewableClip {
@@ -50,7 +50,7 @@ export function ClipReviewPanel({
   const [start, setStart] = useState(clip.startSeconds);
   const [end, setEnd] = useState(clip.endSeconds);
   const [verdict, setVerdict] = useState<"good" | "bad" | null>(clip.review?.verdict ?? null);
-  const [reasons, setReasons] = useState<RejectReason[]>(clip.review?.reasons ?? []);
+  const [reasons, setReasons] = useState<ReviewReason[]>(clip.review?.reasons ?? []);
   const [note, setNote] = useState(clip.review?.note ?? "");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -93,7 +93,7 @@ export function ClipReviewPanel({
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          review: { verdict, reasons: verdict === "bad" ? reasons : [], note },
+          review: { verdict, reasons: reasons.filter(verdict === "bad" ? isRejectReason : isGoodReason), note },
           ...(edgesChanged ? { startSeconds: start, endSeconds: end } : {}),
         }),
       });
@@ -106,7 +106,7 @@ export function ClipReviewPanel({
     }
   };
 
-  const toggleReason = (r: RejectReason) =>
+  const toggleReason = (r: ReviewReason) =>
     setReasons((prev) => (prev.includes(r) ? prev.filter((x) => x !== r) : [...prev, r]));
 
   return (
@@ -172,7 +172,7 @@ export function ClipReviewPanel({
 
       {verdict === "bad" && (
         <div className="flex flex-wrap gap-1">
-          {(Object.keys(REJECT_REASONS) as RejectReason[]).map((r) => (
+          {(Object.keys(REJECT_REASONS) as (keyof typeof REJECT_REASONS)[]).map((r) => (
             <button
               key={r}
               onClick={() => toggleReason(r)}

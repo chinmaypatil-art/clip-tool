@@ -1,7 +1,7 @@
 import { randomUUID } from "crypto";
 import { processSingleton } from "./processState";
 import path from "path";
-import { mkdir, readFile, writeFile, readdir } from "fs/promises";
+import { mkdir, readFile, writeFile, readdir, rename } from "fs/promises";
 import type { TranscriptSegment } from "./transcript";
 import type { NormalizedClip } from "./providers/types";
 import type { Provider } from "./keystore";
@@ -195,7 +195,11 @@ function persist(analysis: Analysis): void {
     void (async () => {
       try {
         await mkdir(analysisDir(analysis.id), { recursive: true });
-        await writeFile(path.join(analysisDir(analysis.id), "analysis.json"), JSON.stringify(analysis, null, 2));
+        // Write then rename, so a crash mid-write never leaves a half-written
+        // analysis.json (it holds the reviews).
+        const file = path.join(analysisDir(analysis.id), "analysis.json");
+        await writeFile(`${file}.tmp`, JSON.stringify(analysis, null, 2));
+        await rename(`${file}.tmp`, file);
       } catch (err) {
         console.error(`[analyses] failed to persist analysis ${analysis.id}:`, err);
       }

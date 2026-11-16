@@ -2,10 +2,11 @@
 
 import { useState } from "react";
 import { motion } from "framer-motion";
-import { AlertCircle, Download, ExternalLink, Loader2, MessageSquare, RotateCw, ThumbsDown, ThumbsUp } from "lucide-react";
+import { AlertCircle, Download, ExternalLink, Loader2, RotateCw, Scissors, ThumbsDown, ThumbsUp } from "lucide-react";
 import type { AnalysisClip } from "@/lib/analyses";
 import type { TranscriptSegment } from "@/lib/transcript";
 import { ClipReviewPanel } from "@/components/ClipReviewPanel";
+import { QuickFeedback } from "./QuickFeedback";
 import { clock, cn, linkAt } from "./format";
 
 export function ClipTile({
@@ -131,14 +132,21 @@ export function ClipTile({
           )}
           <button
             onClick={() => setReviewing((r) => !r)}
+            title="Move the start or end by a sentence"
             className={cn(
               "flex flex-1 items-center justify-center gap-1.5 rounded-lg py-1.5 text-xs transition",
               reviewing ? "bg-white text-zinc-900" : "bg-white/[0.06] text-zinc-200 hover:bg-white/[0.12]"
             )}
           >
-            <MessageSquare size={13} /> Review
+            <Scissors size={13} /> Fix start/end
           </button>
         </div>
+        <QuickFeedback
+          key={clip.review?.reviewedAt ?? "new"}
+          url={`/api/analyses/${analysisId}/runs/${runId}/clips/${clip.id}`}
+          review={clip.review}
+          onSaved={onChanged}
+        />
         {reviewing && (
           <ClipReviewPanel
             analysisId={analysisId}

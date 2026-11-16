@@ -1,5 +1,5 @@
 import path from "path";
-import { mkdir, writeFile } from "fs/promises";
+import { appendFile, mkdir, writeFile } from "fs/promises";
 import { listAnalyses, type Analysis, type AnalysisClip, type ModelRun } from "./analyses";
 import { clipLengthRange } from "./clipLength";
 import { buildWindowClipPrompt } from "./providers/types";
@@ -128,4 +128,14 @@ export async function exportTrainingData(): Promise<TrainingStats> {
     good: reviews.filter((r) => (r as { verdict: string }).verdict === "good").length,
     examples: examples.length,
   };
+}
+
+/**
+ * Appends one review change to storage/training/review-log.jsonl. Unlike the
+ * files above it is never rewritten, so every label anyone ever gave survives
+ * a deleted video or a damaged analysis.json.
+ */
+export async function logReview(entry: object): Promise<void> {
+  await mkdir(TRAINING_ROOT, { recursive: true });
+  await appendFile(path.join(TRAINING_ROOT, "review-log.jsonl"), JSON.stringify({ at: Date.now(), ...entry }) + "\n");
 }

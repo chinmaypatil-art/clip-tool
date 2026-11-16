@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { loadAnalysis, updateRunClip, type AnalysisClip } from "@/lib/analyses";
-import { isRejectReason, type ClipReview } from "@/lib/review";
-import { exportTrainingData } from "@/lib/training";
+import { isGoodReason, isRejectReason, type ClipReview } from "@/lib/review";
+import { exportTrainingData, logReview } from "@/lib/training";
 
 /**
  * Saves a reviewer's verdict and/or corrected edges for one clip, then
@@ -44,7 +44,7 @@ export async function PATCH(
     } else if (r?.verdict === "good" || r?.verdict === "bad") {
       const review: ClipReview = {
         verdict: r.verdict,
-        reasons: Array.isArray(r.reasons) ? r.reasons.filter(isRejectReason) : [],
+        reasons: Array.isArray(r.reasons) ? r.reasons.filter(r.verdict === "bad" ? isRejectReason : isGoodReason) : [],
         note: typeof r.note === "string" ? r.note.slice(0, 500) : "",
         reviewedAt: Date.now(),
       };
@@ -55,6 +55,7 @@ export async function PATCH(
   }
 
   updateRunClip(id, runId, clipId, patch);
+  await logReview({ analysisId: id, source: analysis.sourceUrl ?? analysis.sourceLabel, runId, clipId, title: clip.title, ...patch });
   const training = await exportTrainingData();
   return NextResponse.json({ ok: true, training });
 }
