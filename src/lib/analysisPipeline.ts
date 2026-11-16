@@ -29,6 +29,10 @@ export class AnalysisPipelineError extends Error {}
 
 // Picks this far under the chosen minimum are still kept (see validation.ts).
 const SHORT_TOLERANCE = 0.6;
+// A local model reading one window marks the moment itself and ignores long
+// length ranges (30-155s picks for a 3-4 min setting, all dropped). Any pick
+// this long counts as the core moment; setup before it makes up the length.
+const LOCAL_MIN_MOMENT_SECONDS = 20;
 
 /**
  * Downloads the source (needed later for rendering regardless of path) and
@@ -192,7 +196,8 @@ export async function pickClips({
         meta: { keyId: "local", keyLabel: "local (no key)", attempts: 1 },
       }
     : await runAnalysis(provider, model, segments, TARGET_CLIP_COUNT, range);
-  const picked = keepBest(clampAndDedupe(result.clips, durationSeconds, range, segments), TARGET_CLIP_COUNT);
+  const minPick = windowed ? Math.min(LOCAL_MIN_MOMENT_SECONDS, range.minSeconds * SHORT_TOLERANCE) : range.minSeconds * SHORT_TOLERANCE;
+  const picked = keepBest(clampAndDedupe(result.clips, durationSeconds, range, segments, minPick), TARGET_CLIP_COUNT);
   const clips = await refineEdges(picked, range, segments, sourcePath, await getLocalEndChecker(provider, model));
   return { ...result, clips };
 }
@@ -201,7 +206,8 @@ function clampAndDedupe<T extends { startSeconds: number; endSeconds: number; vi
   clips: T[],
   durationSeconds: number,
   range: ClipLengthRange,
-  segments?: TranscriptSegment[]
+  segments?: TranscriptSegment[],
+  minPickSeconds = range.minSeconds * SHORT_TOLERANCE
 ): T[] {
   const cleaned: T[] = [];
   for (const clip of clips) {
@@ -209,8 +215,8 @@ function clampAndDedupe<T extends { startSeconds: number; endSeconds: number; vi
     const start = Math.max(0, Math.min(clip.startSeconds, durationSeconds));
     const end = trimTrailingQuestion(start, Math.max(0, Math.min(clip.endSeconds, durationSeconds)), segments);
     const length = end - start;
-    if (length < range.minSeconds * SHORT_TOLERANCE) continue;
-    const clampedEnd = fitToMaxLength(start, end, range.maxSeconds, range.minSeconds * SHORT_TOLERANCE, segments);
+    if (length < minPickSeconds) continue;
+    const clampedEnd = fitToMaxLength(start, end, range.maxSeconds, minPickSeconds, segments);
     const long = reachMinLength(start, clampedEnd, range.minSeconds, durationSeconds);
     const snapped = snapToSentences(long.startSeconds, long.endSeconds, range.maxSeconds, segments);
     if (snapped.endSeconds - snapped.startSeconds < range.minSeconds) continue;
