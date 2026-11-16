@@ -52,6 +52,7 @@ interface ModelRun {
   tokenUsage: { inputTokens?: number; outputTokens?: number } | null;
   keyLabel: string | null;
   error: string | null;
+  clipLength?: ClipLengthPreset;
   clips: AnalysisClip[];
 }
 
@@ -635,6 +636,12 @@ export default function Compare() {
                           </div>
                           <p className="mb-1 text-[11px] text-zinc-500">
                             {formatTime(clip.startSeconds)}-{formatTime(clip.endSeconds)} · {clip.category}
+                            {run.clipLength &&
+                              clip.endSeconds - clip.startSeconds < CLIP_LENGTH_PRESETS[run.clipLength].minSeconds - 1 && (
+                                <span className="ml-1.5 rounded bg-amber-500/15 px-1 py-0.5 text-[10px] text-amber-300">
+                                  {formatTime(clip.endSeconds - clip.startSeconds)} · shorter than asked
+                                </span>
+                              )}
                           </p>
                           <p className="mb-1 text-[11px] italic text-zinc-400">&ldquo;{clip.hook}&rdquo;</p>
                           <p className="mb-2 text-[11px] text-zinc-500">{clip.reasoning}</p>

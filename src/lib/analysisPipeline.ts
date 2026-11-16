@@ -33,6 +33,13 @@ const SHORT_TOLERANCE = 0.6;
 // length ranges (30-155s picks for a 3-4 min setting, all dropped). Any pick
 // this long counts as the core moment; setup before it makes up the length.
 const LOCAL_MIN_MOMENT_SECONDS = 20;
+// A clip shorter than the chosen length only gets this much lead-in before
+// its moment. Padding it all the way to the minimum pulled in the end of the
+// previous topic; a clean shorter clip is worth more than a long broken one.
+const MAX_SETUP_SECONDS = 20;
+// No clip under a minute, whatever the topic (the team's floor).
+const HARD_MIN_SECONDS = 60;
+const shortestClip = (range: ClipLengthRange) => Math.min(range.minSeconds, HARD_MIN_SECONDS);
 
 /**
  * Downloads the source (needed later for rendering regardless of path) and
@@ -217,9 +224,9 @@ function clampAndDedupe<T extends { startSeconds: number; endSeconds: number; vi
     const length = end - start;
     if (length < minPickSeconds) continue;
     const clampedEnd = fitToMaxLength(start, end, range.maxSeconds, minPickSeconds, segments);
-    const long = reachMinLength(start, clampedEnd, range.minSeconds, durationSeconds);
+    const long = reachMinLength(start, clampedEnd, range.minSeconds, durationSeconds, MAX_SETUP_SECONDS);
     const snapped = snapToSentences(long.startSeconds, long.endSeconds, range.maxSeconds, segments);
-    if (snapped.endSeconds - snapped.startSeconds < range.minSeconds) continue;
+    if (snapped.endSeconds - snapped.startSeconds < shortestClip(range)) continue;
     cleaned.push({ ...clip, ...snapped });
   }
   cleaned.sort((a, b) => b.viralScore - a.viralScore);
@@ -274,8 +281,8 @@ async function refineEdges<T extends { startSeconds: number; endSeconds: number 
         if (newEnd > startSeconds + 3 && newEnd - startSeconds <= range.maxSeconds && newEnd < nextStart) {
           endSeconds = newEnd;
           if (endSeconds - startSeconds < range.minSeconds) {
-            // Ended early: reach the minimum with setup before it, never more after.
-            const grown = reachMinLength(startSeconds, endSeconds, range.minSeconds, endSeconds);
+            // Ended early: take a little setup before it, never more after.
+            const grown = reachMinLength(startSeconds, endSeconds, range.minSeconds, endSeconds, MAX_SETUP_SECONDS);
             const prevEnd = out[out.length - 1]?.endSeconds ?? 0;
             const snappedStart = snapToSentences(grown.startSeconds, endSeconds, range.maxSeconds, segments).startSeconds;
             startSeconds = Math.max(prevEnd, Math.min(grown.startSeconds, snappedStart));
@@ -292,7 +299,7 @@ async function refineEdges<T extends { startSeconds: number; endSeconds: number 
         findSilences(sourcePath, endSeconds - 2, endSeconds + 4),
       ]);
       const silences = [...head, ...tail];
-      const snapped = snapToSilence(startSeconds, endSeconds, range, silences);
+      const snapped = snapToSilence(startSeconds, endSeconds, { ...range, minSeconds: shortestClip(range) }, silences);
       if (snapped.endSeconds < nextStart) ({ startSeconds, endSeconds } = snapped);
     } catch (err) {
       console.error("[analysisPipeline] silence snap failed, keeping transcript edges:", err);

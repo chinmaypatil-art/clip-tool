@@ -238,16 +238,20 @@ const MIN_LENGTH_MARGIN_SECONDS = 1;
 /**
  * Grows a clip that is shorter than the minimum by moving its start back into
  * the setup (never past the payoff); at the very start of the video, the end
- * moves on instead.
+ * moves on instead. Grows by at most `maxGrowSeconds`, so the clip may stay
+ * under the minimum rather than take in the previous topic.
  */
 export function reachMinLength(
   startSeconds: number,
   endSeconds: number,
   minSeconds: number,
-  durationSeconds: number
+  durationSeconds: number,
+  maxGrowSeconds = Infinity
 ): { startSeconds: number; endSeconds: number } {
   const target = minSeconds + MIN_LENGTH_MARGIN_SECONDS;
   if (endSeconds - startSeconds >= minSeconds) return { startSeconds, endSeconds };
-  const start = Math.max(0, endSeconds - target);
-  return { startSeconds: start, endSeconds: Math.min(durationSeconds, Math.max(endSeconds, start + target)) };
+  const start = Math.max(0, endSeconds - target, startSeconds - maxGrowSeconds);
+  const growLeft = maxGrowSeconds - (startSeconds - start);
+  const end = Math.min(durationSeconds, endSeconds + growLeft, Math.max(endSeconds, start + target));
+  return { startSeconds: start, endSeconds: end };
 }
