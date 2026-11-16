@@ -121,7 +121,26 @@ export async function loadAnalysis(id: string): Promise<Analysis | undefined> {
   try {
     const raw = await readFile(path.join(analysisDir(id), "analysis.json"), "utf8");
     const analysis = JSON.parse(raw) as Analysis;
+    // Loaded from disk means this process didn't start it: anything still
+    // marked as running was cut off by a server restart and will never finish.
+    let interrupted = false;
+    for (const run of analysis.runs) {
+      for (const clip of run.clips) {
+        if (clip.renderStatus !== "rendering") continue;
+        Object.assign(clip, { renderStatus: "error", renderError: "Stopped by a server restart. Click Try again." });
+        interrupted = true;
+      }
+      if (run.status === "running" || run.status === "queued") {
+        Object.assign(run, { status: "error", error: "Stopped by a server restart. Start the video again." });
+        interrupted = true;
+      }
+    }
+    if (analysis.status === "extracting_transcript") {
+      Object.assign(analysis, { status: "error", error: "Stopped by a server restart. Start the video again." });
+      interrupted = true;
+    }
     analyses.set(id, analysis);
+    if (interrupted) persist(analysis);
     return analysis;
   } catch {
     return undefined;

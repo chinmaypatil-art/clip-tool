@@ -36,6 +36,11 @@ export async function POST(req: NextRequest) {
     if (typeof url !== "string" || !isUrl(url)) {
       return NextResponse.json({ error: "Provide a valid http(s) URL." }, { status: 400 });
     }
+    // Pasting this site's own address (an easy slip when sharing the link) is never a video.
+    const host = new URL(url).hostname;
+    if (host === "localhost" || host === "127.0.0.1" || host.endsWith(".ts.net")) {
+      return NextResponse.json({ error: "That's the Clipwise link, not a video. Paste a YouTube link instead." }, { status: 400 });
+    }
     const analysis = createAnalysis(url, isYoutubeUrl(url) ? "youtube" : "file", url);
     if (body?.oneClick) {
       applySettings(analysis.id, body);
