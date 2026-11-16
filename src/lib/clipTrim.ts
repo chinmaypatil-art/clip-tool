@@ -61,6 +61,19 @@ const MAX_REACTION_SECONDS = 8;
 // Breathing room at each edge, never taken from a neighbouring sentence.
 const START_PAD_SECONDS = 0.3;
 const END_PAD_SECONDS_SOFT = 0.6;
+// How far past the picked end a clip may run to finish the speaker's thought.
+const MAX_CONTINUATION_SECONDS = 20;
+// A gap shorter than this between two lines of one speaker is the same breath.
+const SAME_BREATH_SECONDS = 1;
+
+/** Whether sentence i+1 is the same speaker finishing the thought sentence i started. */
+function continues(sentences: Sentence[], i: number, punctuated: boolean): boolean {
+  const cur = sentences[i];
+  const next = sentences[i + 1];
+  if (!cur || !next || next.turn || next.start - cur.end > SAME_BREATH_SECONDS) return false;
+  // Unpunctuated (Hindi auto) captions can't tell an unfinished sentence apart.
+  return DEPENDENT_OPENER.test(next.text) || (punctuated && !/[.!…।]$/.test(cur.text));
+}
 
 /**
  * Splits caption lines into sentences. A YouTube caption line is a screenful
@@ -163,6 +176,15 @@ export function snapToSentences(
     while (ei > si && !fits(ei)) ei--;
     if (ei > si && sentences[ei].end > endSeconds + MAX_EDGE_SHIFT_SECONDS) ei--;
   }
+  // The same speaker carrying straight on ("…is parked. But you have to make
+  // the money first.") is the point landing, not a new topic: take it in, or,
+  // if it won't fit, end before the thought it belongs to instead.
+  const punctuated = sentences.some((s) => /[.?!…।]$/.test(s.text));
+  let carried = ei;
+  while (continues(sentences, carried, punctuated) && sentences[carried + 1].end <= endSeconds + MAX_CONTINUATION_SECONDS && fits(carried + 1)) carried++;
+  if (!continues(sentences, carried, punctuated)) ei = carried;
+  else while (ei > si && continues(sentences, ei, punctuated)) ei--;
+
   const next = sentences[ei + 1];
   // A question or a "But…" opens a new point rather than reacting to this one.
   const isReaction =
