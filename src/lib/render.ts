@@ -5,6 +5,7 @@ import type { TikTokPage } from "@remotion/captions";
 import type { FramingSegment } from "../../remotion/types";
 import { createLimiter } from "./limit";
 import { processSingleton } from "./processState";
+import { renderClipFfmpeg } from "./ffmpegRender";
 
 export class RenderError extends Error {
   constructor(message: string, public readonly cause?: unknown) {
@@ -15,6 +16,10 @@ export class RenderError extends Error {
 
 const REMOTION_ENTRY = path.join(process.cwd(), "remotion", "index.ts");
 const COMPOSITION_ID = "clip-classic";
+// "ffmpeg" (default) renders with ffmpeg + NVENC (src/lib/ffmpegRender.ts),
+// minutes faster, and falls back to Remotion if that fails; "remotion" always
+// uses Remotion.
+const RENDERER = process.env.RENDERER ?? "ffmpeg";
 const RENDER_CONCURRENCY = process.env.RENDER_CONCURRENCY ?? "75%";
 // Each render already uses most CPU threads, so renders run one after another
 // (server-wide, across jobs and Compare). Five at once took 8-13 min each and
@@ -67,11 +72,22 @@ export interface RenderClipInput {
   onProgress?: (progress: number) => void;
   /** Called when this clip leaves the render queue and starts rendering. */
   onStart?: () => void;
+  /** Local path of the pre-cut segment; lets the ffmpeg renderer run. */
+  segmentPath?: string;
 }
 
 export function renderClip(input: RenderClipInput): Promise<void> {
   return renderSlot(async () => {
     input.onStart?.();
+    if (RENDERER === "ffmpeg" && input.segmentPath) {
+      try {
+        await renderClipFfmpeg({ ...input, segmentPath: input.segmentPath });
+        input.onProgress?.(1);
+        return;
+      } catch (err) {
+        console.warn(`[render] ffmpeg render failed for "${input.outputPath}", using Remotion: ${describeError(err)}`);
+      }
+    }
     try {
       await renderClipNow(input);
     } catch (err) {

@@ -388,6 +388,7 @@ export async function renderAnalysisClip(analysisId: string, runId: string, clip
       title: clip.title,
       captionPages,
       framing: await framingPromise,
+      segmentPath,
       onStart: () => updateRunClip(analysisId, runId, clipId, { renderStartedAt: Date.now() }),
     }).finally(() => rm(segmentPath, { force: true }).catch(() => {}));
 

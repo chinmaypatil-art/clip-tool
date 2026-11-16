@@ -241,6 +241,7 @@ export async function runPipeline({ jobId, source, clipLength }: RunPipelineInpu
           title: v.title,
           captionPages,
           framing,
+          segmentPath,
           onProgress: (progress) => {
             updateJob(jobId, {
               progressMessage: `Rendering clip ${i + 1}/${validated.length}: "${v.title}" (${Math.round(progress * 100)}%)`,
