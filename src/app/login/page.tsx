@@ -20,7 +20,7 @@ export default function LoginPage({ searchParams }: { searchParams: Promise<{ wr
           autoFocus
           required
           placeholder="Password"
-          className="w-full rounded-xl border border-white/10 bg-white/[0.03] px-4 py-2.5 text-sm text-zinc-100 placeholder:text-zinc-600 focus:border-white/30 focus:outline-none"
+          className="w-full rounded-xl border border-white/10 bg-zinc-900 px-4 py-2.5 text-sm text-zinc-100 placeholder:text-zinc-600 focus:border-white/30 focus:outline-none"
         />
         <Suspense>
           <WrongPassword searchParams={searchParams} />
