@@ -98,6 +98,9 @@ All settings go in `.env.local`.
 | `RENDER_SLOTS` | `1` | Remotion renders at the same time |
 | `RENDER_CONCURRENCY` | `75%` | Remotion render threads |
 | `WHISPER_MODEL` / `WHISPER_DEVICE` / `WHISPER_LANGUAGE` | auto | Whisper overrides |
+| `SOURCE_KEEP_DAYS` | `3` | Days a downloaded source video is kept (clips are always kept) |
+| `LOW_DISK_GB` | `30` | Below this, sources are deleted early, oldest first |
+| `MIN_FREE_GB` | `10` | Below this, new videos are refused |
 | `GEMINI_API_KEY`, `GEMINI_MODEL`, `GEMINI_FALLBACK_MODEL` | unset | Gemini, used only as a benchmark in `/lab` |
 | `KEY_STORE_SECRET` | unset | Encrypts API keys saved in `/lab` |
 
