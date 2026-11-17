@@ -47,33 +47,35 @@ export function ClipReviewPanel({
   onRerender: () => void;
 }) {
   const sentences = useMemo(() => toSentences(segments), [segments]);
-  const [start, setStart] = useState(clip.startSeconds);
-  const [end, setEnd] = useState(clip.endSeconds);
+  // The edges are tracked as sentence indexes, not times: caption lines
+  // overlap, so turning a moved time back into a sentence could land on the
+  // same sentence again and the arrow would seem to do nothing.
+  const [initialStartIdx, initialEndIdx] = useMemo(() => {
+    const si = Math.max(0, sentences.findIndex((s) => s.end > clip.startSeconds + 0.3));
+    let ei = si;
+    sentences.forEach((s, i) => {
+      if (i >= si && s.start < clip.endSeconds - 0.3) ei = i;
+    });
+    return [si, ei];
+  }, [sentences, clip.startSeconds, clip.endSeconds]);
+  const [startIdx, setStartIdx] = useState(initialStartIdx);
+  const [endIdx, setEndIdx] = useState(initialEndIdx);
   const [verdict, setVerdict] = useState<"good" | "bad" | null>(clip.review?.verdict ?? null);
   const [reasons, setReasons] = useState<ReviewReason[]>(clip.review?.reasons ?? []);
   const [note, setNote] = useState(clip.review?.note ?? "");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const startIdx = Math.max(0, sentences.findIndex((s) => s.end > start + 0.3));
-  let endIdx = startIdx;
-  sentences.forEach((s, i) => {
-    if (s.start < end - 0.3) endIdx = i;
-  });
+  const edgesChanged = startIdx !== initialStartIdx || endIdx !== initialEndIdx;
+  // Small pads match snapToSentences, so the first/last word isn't clipped.
+  const start = edgesChanged ? Math.max(0, Number(((sentences[startIdx]?.start ?? 0) - 0.3).toFixed(2))) : clip.startSeconds;
+  const end = edgesChanged ? Number(((sentences[endIdx]?.end ?? 0) + 0.5).toFixed(2)) : clip.endSeconds;
   const firstLine = sentences[startIdx]?.text ?? "";
   const lastLine = sentences[endIdx]?.text ?? "";
 
-  // Small pads match snapToSentences, so the first/last word isn't clipped.
-  const moveStart = (dir: -1 | 1) => {
-    const s = sentences[Math.min(endIdx, Math.max(0, startIdx + dir))];
-    if (s) setStart(Math.max(0, Number((s.start - 0.3).toFixed(2))));
-  };
-  const moveEnd = (dir: -1 | 1) => {
-    const s = sentences[Math.min(sentences.length - 1, Math.max(startIdx, endIdx + dir))];
-    if (s) setEnd(Number((s.end + 0.5).toFixed(2)));
-  };
+  const moveStart = (dir: -1 | 1) => setStartIdx((i) => Math.min(endIdx, Math.max(0, i + dir)));
+  const moveEnd = (dir: -1 | 1) => setEndIdx((i) => Math.min(sentences.length - 1, Math.max(startIdx, i + dir)));
 
-  const edgesChanged = Math.abs(start - clip.startSeconds) > 0.05 || Math.abs(end - clip.endSeconds) > 0.05;
   const renderedStart = clip.renderedStartSeconds ?? clip.modelStartSeconds ?? clip.startSeconds;
   const renderedEnd = clip.renderedEndSeconds ?? clip.modelEndSeconds ?? clip.endSeconds;
   const renderIsStale =
@@ -84,8 +86,9 @@ export function ClipReviewPanel({
     note !== (clip.review?.note ?? "") ||
     reasons.join() !== (clip.review?.reasons ?? []).join();
 
-  const save = async () => {
-    if (!verdict) return;
+  /** Saves the verdict (if any) and/or new edges; with `rerender`, renders the clip again afterwards. */
+  const save = async (rerender = false) => {
+    if (!verdict && !edgesChanged) return;
     setSaving(true);
     setError(null);
     try {
@@ -93,12 +96,13 @@ export function ClipReviewPanel({
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          review: { verdict, reasons: reasons.filter(verdict === "bad" ? isRejectReason : isGoodReason), note },
+          ...(verdict ? { review: { verdict, reasons: reasons.filter(verdict === "bad" ? isRejectReason : isGoodReason), note } } : {}),
           ...(edgesChanged ? { startSeconds: start, endSeconds: end } : {}),
         }),
       });
       if (!res.ok) throw new Error((await res.json().catch(() => null))?.error ?? "Save failed.");
       onSaved();
+      if (rerender) onRerender();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -142,8 +146,8 @@ export function ClipReviewPanel({
       {edgesChanged && (
         <button
           onClick={() => {
-            setStart(clip.startSeconds);
-            setEnd(clip.endSeconds);
+            setStartIdx(initialStartIdx);
+            setEndIdx(initialEndIdx);
           }}
           className="flex items-center gap-1 text-[10px] text-zinc-500 hover:text-zinc-300"
         >
@@ -195,13 +199,22 @@ export function ClipReviewPanel({
 
       <div className="flex gap-1.5">
         <button
-          onClick={save}
-          disabled={!verdict || saving || (!reviewChanged && !edgesChanged)}
+          onClick={() => save()}
+          disabled={saving || (!edgesChanged && (!verdict || !reviewChanged))}
           className="flex flex-1 items-center justify-center gap-1 rounded-md bg-violet-600 py-1 text-[11px] font-medium text-white disabled:opacity-40"
         >
-          {saving && <Loader2 size={11} className="animate-spin" />} Save review
+          {saving && <Loader2 size={11} className="animate-spin" />} Save
         </button>
-        {renderIsStale && canRender && (
+        {edgesChanged && canRender && (
+          <button
+            onClick={() => save(true)}
+            disabled={saving}
+            className="rounded-md bg-white/5 px-2 py-1 text-[11px] text-zinc-300 hover:bg-violet-600 hover:text-white disabled:opacity-40"
+          >
+            Save &amp; re-render
+          </button>
+        )}
+        {!edgesChanged && renderIsStale && canRender && (
           <button onClick={onRerender} className="rounded-md bg-white/5 px-2 py-1 text-[11px] text-zinc-300 hover:bg-violet-600 hover:text-white">
             Re-render with new edges
           </button>
