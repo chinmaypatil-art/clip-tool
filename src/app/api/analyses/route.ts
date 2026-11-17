@@ -6,6 +6,7 @@ import { isUrl, isYoutubeUrl } from "@/lib/media";
 import { runTranscriptExtraction, listProviderModels, makeClips } from "@/lib/analysisPipeline";
 import { DEFAULT_CLIP_LENGTH, isClipLengthPreset } from "@/lib/clipLength";
 import { parseCaptionStyle } from "@/lib/captionStyle";
+import { hasRoomForNewVideo } from "@/lib/housekeeping";
 
 export async function GET(req: NextRequest) {
   const url = new URL(req.url);
@@ -28,6 +29,9 @@ export async function GET(req: NextRequest) {
  * Compare starts model runs.
  */
 export async function POST(req: NextRequest) {
+  if (!(await hasRoomForNewVideo())) {
+    return NextResponse.json({ error: "The server's disk is almost full. Delete some videos from the Library first." }, { status: 507 });
+  }
   const contentType = req.headers.get("content-type") ?? "";
 
   if (contentType.includes("application/json")) {
