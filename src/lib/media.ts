@@ -90,10 +90,30 @@ export async function downloadVideo(
       "Spotify links are not supported — Spotify streams are DRM-protected and cannot be downloaded. Use a direct podcast RSS/MP3 link, YouTube, Instagram, TikTok, or Facebook instead."
     );
   }
-  if (signal?.aborted) throw new CancelledError();
+  // YouTube sometimes refuses a download outright (HTTP 403), which yt-dlp
+  // treats as final; a fresh attempt a few seconds later usually works.
+  const waits = [5, 20, 60];
+  for (let attempt = 0; ; attempt++) {
+    if (signal?.aborted) throw new CancelledError();
+    try {
+      return await runDownload(url, outPath, onProgress, signal);
+    } catch (err) {
+      const refused = err instanceof MediaError && /HTTP Error 403|403: Forbidden/.test(err.message);
+      if (!refused || attempt >= waits.length) throw err;
+      onProgress?.(`YouTube refused the download; retrying in ${waits[attempt]}s\n`);
+      await new Promise((r) => setTimeout(r, waits[attempt] * 1000));
+    }
+  }
+}
 
+function runDownload(
+  url: string,
+  outPath: string,
+  onProgress?: (line: string) => void,
+  signal?: AbortSignal
+): Promise<void> {
   const ytDlp = getYtDlpPath();
-  await new Promise<void>((resolve, reject) => {
+  return new Promise<void>((resolve, reject) => {
     const proc = spawn(
       ytDlp,
       [
