@@ -1,9 +1,11 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { hasAccess } from "@/lib/access";
+import { noteRequest } from "@/lib/activity";
 
 /** Sends visitors without the access cookie to /login (APIs get a 401). */
 export async function proxy(request: NextRequest) {
+  noteRequest();
   if (await hasAccess(request)) return NextResponse.next();
   if (request.nextUrl.pathname.startsWith("/api/")) {
     return NextResponse.json({ error: "Log in first" }, { status: 401 });

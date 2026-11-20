@@ -11,12 +11,14 @@ import { DEFAULT_CLIP_LENGTH, isClipLengthPreset } from "@/lib/clipLength";
 import { parseCaptionStyle } from "@/lib/captionStyle";
 import { hasRoomForNewVideo } from "@/lib/housekeeping";
 import { hasAccess } from "@/lib/access";
+import { noteRequest, uploadFinished, uploadStarted } from "@/lib/activity";
 
 const MAX_UPLOAD_BYTES = 2 * 1024 * 1024 * 1024;
 
 const LOG_IN_FIRST = () => NextResponse.json({ error: "Log in first" }, { status: 401 });
 
 export async function GET(req: NextRequest) {
+  noteRequest();
   if (!(await hasAccess(req))) return LOG_IN_FIRST();
   const url = new URL(req.url);
   if (url.searchParams.get("providers") === "1") {
@@ -38,6 +40,15 @@ export async function GET(req: NextRequest) {
  * Compare starts model runs.
  */
 export async function POST(req: NextRequest) {
+  uploadStarted();
+  try {
+    return await startVideo(req);
+  } finally {
+    uploadFinished();
+  }
+}
+
+async function startVideo(req: NextRequest) {
   if (!(await hasAccess(req))) return LOG_IN_FIRST();
   if (!(await hasRoomForNewVideo())) {
     return NextResponse.json({ error: "The server's disk is almost full. Delete some videos from the Library first." }, { status: 507 });
