@@ -1,4 +1,2 @@
-# Keep LF line endings in the repo regardless of OS
-* text=auto eol=lf
-*.onnx binary
-*.ico binary
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
