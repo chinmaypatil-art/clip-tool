@@ -1,14 +1,23 @@
 import { NextRequest, NextResponse } from "next/server";
 import path from "path";
-import { writeFile } from "fs/promises";
+import { createWriteStream } from "fs";
+import { Readable } from "stream";
+import { pipeline } from "stream/promises";
+import type { ReadableStream as NodeReadableStream } from "stream/web";
 import { createAnalysis, ensureAnalysisDir, listAnalyses, updateAnalysis } from "@/lib/analyses";
 import { isUrl, isYoutubeUrl } from "@/lib/media";
 import { runTranscriptExtraction, listProviderModels, makeClips } from "@/lib/analysisPipeline";
 import { DEFAULT_CLIP_LENGTH, isClipLengthPreset } from "@/lib/clipLength";
 import { parseCaptionStyle } from "@/lib/captionStyle";
 import { hasRoomForNewVideo } from "@/lib/housekeeping";
+import { hasAccess } from "@/lib/access";
+
+const MAX_UPLOAD_BYTES = 2 * 1024 * 1024 * 1024;
+
+const LOG_IN_FIRST = () => NextResponse.json({ error: "Log in first" }, { status: 401 });
 
 export async function GET(req: NextRequest) {
+  if (!(await hasAccess(req))) return LOG_IN_FIRST();
   const url = new URL(req.url);
   if (url.searchParams.get("providers") === "1") {
     return NextResponse.json({ providers: await listProviderModels() });
@@ -29,6 +38,7 @@ export async function GET(req: NextRequest) {
  * Compare starts model runs.
  */
 export async function POST(req: NextRequest) {
+  if (!(await hasAccess(req))) return LOG_IN_FIRST();
   if (!(await hasRoomForNewVideo())) {
     return NextResponse.json({ error: "The server's disk is almost full. Delete some videos from the Library first." }, { status: 507 });
   }
@@ -56,23 +66,31 @@ export async function POST(req: NextRequest) {
   }
 
   if (contentType.includes("multipart/form-data")) {
+    // Refuse oversized uploads before reading them into memory.
+    if (Number(req.headers.get("content-length") ?? 0) > MAX_UPLOAD_BYTES + 1024 * 1024) {
+      return NextResponse.json({ error: "File must be under 2GB." }, { status: 413 });
+    }
     const form = await req.formData();
     const file = form.get("file");
     if (!(file instanceof File)) {
       return NextResponse.json({ error: "No file provided." }, { status: 400 });
     }
-    const maxBytes = 2 * 1024 * 1024 * 1024;
-    if (file.size === 0 || file.size > maxBytes) {
+    if (file.size === 0 || file.size > MAX_UPLOAD_BYTES) {
       return NextResponse.json({ error: "File must be non-empty and under 2GB." }, { status: 400 });
     }
 
     const analysis = createAnalysis(file.name, "file");
     const dir = await ensureAnalysisDir(analysis.id);
     const uploadPath = path.join(dir, "upload-raw");
-    await writeFile(uploadPath, Buffer.from(await file.arrayBuffer()));
+    await pipeline(Readable.fromWeb(file.stream() as NodeReadableStream), createWriteStream(uploadPath));
 
     if (form.get("oneClick") === "1") {
-      const settings = JSON.parse(String(form.get("settings") ?? "{}"));
+      let settings = {};
+      try {
+        settings = JSON.parse(String(form.get("settings") ?? "{}"));
+      } catch {
+        // Unreadable settings: fall back to the defaults rather than failing the upload.
+      }
       applySettings(analysis.id, settings);
       updateAnalysis(analysis.id, { title: file.name.replace(/\.[^.]+$/, "") });
       void makeClips(analysis.id, { kind: "file", path: uploadPath });

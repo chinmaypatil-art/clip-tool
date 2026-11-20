@@ -120,8 +120,11 @@ function decode(videoPath: string, startSeconds: number, durationSeconds: number
     proc.stderr.on("data", (chunk: Buffer) => {
       stderr += chunk.toString();
     });
+    // A clip's frames take seconds to scan; anything near this limit is stuck.
+    const timer = setTimeout(() => proc.kill(), 10 * 60_000);
     proc.on("error", reject);
     proc.on("close", (code) => {
+      clearTimeout(timer);
       if (code !== 0) return reject(new Error(`ffmpeg exited ${code}: ${stderr.slice(-500)}`));
       const cuts = [...stderr.matchAll(/lavfi\.scd\.time: ([\d.]+)/g)].map((m) => parseFloat(m[1]));
       resolve({ frames, cuts });

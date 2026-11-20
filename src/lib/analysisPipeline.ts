@@ -3,6 +3,8 @@ import { copyFile, rm } from "fs/promises";
 import { createTikTokStyleCaptions } from "@remotion/captions";
 import { randomUUID } from "crypto";
 import { createLimiter } from "./limit";
+import { processSingleton } from "./processState";
+import { ensureOllama } from "./ollamaHealth";
 import { parseCaptionStyle, WORDS_COMBINE_MS } from "./captionStyle";
 import { fetchVideoTitle, downloadVideo, probeVideo, extractAudioSegment, captureThumbnail, cutClip, findSilences, isYoutubeUrl, isUrl, MediaError } from "./media";
 import { extractYoutubeTranscript, captionsToSegments, referenceText, TranscriptError } from "./transcript";
@@ -49,6 +51,15 @@ const shortestClip = (range: ClipLengthRange) => Math.min(range.minSeconds, HARD
  * Whisper transcription for everything else. Every model run against this
  * analysis uses this exact same transcript — required for a fair comparison.
  */
+const MAX_VIDEO_SECONDS = 3 * 3600;
+
+/**
+ * Whole-video Whisper and Gemma's picking each fill most of the GPU; when two
+ * people submit at once, the second waits instead of both running out of
+ * memory. (Per-clip work during rendering is short and isn't gated.)
+ */
+const gpuSlot = processSingleton("gpuSlot", () => createLimiter(1));
+
 export async function runTranscriptExtraction(
   analysisId: string,
   source: { kind: "url"; url: string } | { kind: "file"; path: string }
@@ -69,6 +80,9 @@ export async function runTranscriptExtraction(
     const probe = await probeVideo(sourcePath);
     if (probe.durationSeconds < 30) {
       throw new AnalysisPipelineError("Video is too short to extract meaningful clips (minimum 30 seconds).");
+    }
+    if (probe.durationSeconds > MAX_VIDEO_SECONDS) {
+      throw new AnalysisPipelineError("This video is over 3 hours long. Please use a shorter video or cut it into parts.");
     }
     updateAnalysis(analysisId, { videoDurationSeconds: probe.durationSeconds });
 
@@ -95,7 +109,7 @@ export async function runTranscriptExtraction(
     const wavPath = path.join(dir, "full-audio.wav");
     await extractAudioSegment(sourcePath, wavPath, 0, probe.durationSeconds);
     // Only models read this transcript, and they read Devanagari fine — no romanization needed.
-    const captions = await transcribeWav(wavPath, { romanizer: null });
+    const captions = await gpuSlot(() => transcribeWav(wavPath, { romanizer: null }));
     const segments = captionsToSegments(captions);
     updateAnalysis(analysisId, {
       status: "ready",
@@ -179,14 +193,18 @@ export async function runModelAgainstAnalysis(
   addRun(analysisId, run);
 
   try {
-    const result = await pickClips({
-      provider,
-      model,
-      segments: analysis.transcript.segments,
-      durationSeconds: analysis.videoDurationSeconds ?? Infinity,
-      range: clipLengthRange(clipLength),
-      sourcePath: path.join(analysisDir(analysisId), "source.mp4"),
-    });
+    const transcript = analysis.transcript;
+    await ensureOllama();
+    const result = await gpuSlot(() =>
+      pickClips({
+        provider,
+        model,
+        segments: transcript.segments,
+        durationSeconds: analysis.videoDurationSeconds ?? Infinity,
+        range: clipLengthRange(clipLength),
+        sourcePath: path.join(analysisDir(analysisId), "source.mp4"),
+      })
+    );
     const clips = result.clips.map((c): AnalysisClip => ({ ...c, id: randomUUID(), renderStatus: "pending" }));
 
     updateRun(analysisId, run.id, {

@@ -8,7 +8,11 @@ import { getFfmpegPath } from "./binaries";
 import { probeVideo } from "./media";
 import { CAPTION_FONTS, CAPTION_SIZES, DEFAULT_CAPTION_STYLE, type CaptionStyle } from "./captionStyle";
 
-const execFileAsync = promisify(execFile);
+const runFile = promisify(execFile);
+// Every external tool gets a time limit, so a stuck process fails the job
+// instead of holding it (and the render queue) forever.
+const execFileAsync = ((file: string, args: readonly string[], opts: object = {}) =>
+  runFile(file, args, { timeout: 30 * 60_000, windowsHide: true, ...opts })) as unknown as typeof runFile;
 
 /**
  * Renders a clip with ffmpeg alone (approach from openshorts, MIT): the
@@ -41,7 +45,7 @@ let nvencOk: Promise<boolean> | null = null;
 function nvencAvailable(): Promise<boolean> {
   nvencOk ??= execFileAsync(getFfmpegPath(), [
     "-hide_banner", "-f", "lavfi", "-i", "color=black:s=256x256:d=0.1", "-c:v", "h264_nvenc", "-f", "null", "-",
-  ]).then(() => true, () => false);
+  ], { timeout: 30_000 }).then(() => true, () => false);
   return nvencOk;
 }
 

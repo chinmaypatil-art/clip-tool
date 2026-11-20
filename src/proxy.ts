@@ -1,18 +1,18 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
-import { ACCESS_COOKIE, accessToken, appPassword } from "@/lib/access";
+import { hasAccess } from "@/lib/access";
 
 /** Sends visitors without the access cookie to /login (APIs get a 401). */
 export async function proxy(request: NextRequest) {
-  const password = appPassword();
-  if (!password) return NextResponse.next();
-  if (request.cookies.get(ACCESS_COOKIE)?.value === (await accessToken(password))) return NextResponse.next();
+  if (await hasAccess(request)) return NextResponse.next();
   if (request.nextUrl.pathname.startsWith("/api/")) {
     return NextResponse.json({ error: "Log in first" }, { status: 401 });
   }
   return NextResponse.redirect(new URL("/login", request.url));
 }
 
+// /api/analyses checks access itself: requests passing through the proxy are
+// buffered in memory and cut off at 10 MB, which would truncate video uploads.
 export const config = {
-  matcher: ["/((?!login|api/login|_next/|favicon.ico).*)"],
+  matcher: ["/((?!login|api/login|api/analyses$|_next/|favicon.ico).*)"],
 };

@@ -71,6 +71,9 @@ const isOllama = (baseUrl: string) => /:11434(\/|$)/.test(baseUrl);
 // default context window (a 38-min transcript is ~16k tokens), and there's no
 // way to raise it through that endpoint. Its native /api/chat takes num_ctx.
 const OLLAMA_NUM_CTX = Number(process.env.OLLAMA_NUM_CTX ?? 32_768);
+// A stuck Ollama (e.g. reloading the model after the GPU was busy) must fail
+// the call rather than leave the job "running" forever.
+const OLLAMA_TIMEOUT_MS = 10 * 60_000;
 
 async function analyzeWithOllama(def: CustomProviderDef, model: string, prompt: string): Promise<AnalyzeResult> {
   const start = Date.now();
@@ -84,6 +87,7 @@ async function analyzeWithOllama(def: CustomProviderDef, model: string, prompt: 
   try {
     const res = await fetch(nativeUrl, {
       method: "POST",
+      signal: AbortSignal.timeout(OLLAMA_TIMEOUT_MS),
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         model,
@@ -98,7 +102,7 @@ async function analyzeWithOllama(def: CustomProviderDef, model: string, prompt: 
     if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
   } catch (err) {
     throw new ProviderError(
-      `${def.label} request failed (is Ollama running at ${def.baseUrl}?): ${describeError(err)}`,
+      `${def.label} isn't responding (Gemma may be busy or restarting; please try again in a minute): ${describeError(err)}`,
       "other",
       err
     );
@@ -132,6 +136,7 @@ export function createOllamaRomanizer(
       async (prompt) => {
         const res = await fetch(nativeUrl, {
           method: "POST",
+          signal: AbortSignal.timeout(OLLAMA_TIMEOUT_MS),
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             model,
@@ -157,6 +162,7 @@ export function createOllamaEndChecker(def: CustomProviderDef, model: string): E
   return async ({ inside, following }) => {
     const res = await fetch(nativeUrl, {
       method: "POST",
+      signal: AbortSignal.timeout(OLLAMA_TIMEOUT_MS),
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         model,
@@ -197,6 +203,7 @@ export function createOllamaWindowedPicker(def: CustomProviderDef, model: string
     try {
       res = await fetch(nativeUrl, {
         method: "POST",
+        signal: AbortSignal.timeout(OLLAMA_TIMEOUT_MS),
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           model,
@@ -209,7 +216,7 @@ export function createOllamaWindowedPicker(def: CustomProviderDef, model: string
       });
     } catch (err) {
       // Ollama itself is unreachable: no point trying the other windows.
-      throw new ProviderError(`${def.label} request failed (is Ollama running at ${def.baseUrl}?): ${describeError(err)}`, "other", err);
+      throw new ProviderError(`${def.label} isn't responding (Gemma may be busy or restarting; please try again in a minute): ${describeError(err)}`, "other", err);
     }
     const body: { message?: { content?: string }; prompt_eval_count?: number; eval_count?: number; error?: string } =
       await res.json();

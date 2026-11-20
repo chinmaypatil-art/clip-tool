@@ -5,11 +5,9 @@
 param([string]$User = "$env:COMPUTERNAME\$env:USERNAME")
 
 $root = Split-Path -Parent $PSScriptRoot
-$start = Join-Path $root 'scripts\start-shared.cmd'
-$log = Join-Path $root 'storage\logs\clipwise.log'
-New-Item -ItemType Directory -Force (Split-Path $log) | Out-Null
+$boot = Join-Path $root 'scripts\boot.cmd'
 
-$action = New-ScheduledTaskAction -Execute 'cmd.exe' -Argument "/c `"`"$start`" >> `"$log`" 2>&1`"" -WorkingDirectory $root
+$action = New-ScheduledTaskAction -Execute 'cmd.exe' -Argument "/c `"$boot`"" -WorkingDirectory $root
 $trigger = New-ScheduledTaskTrigger -AtStartup
 $trigger.Delay = 'PT1M'
 $principal = New-ScheduledTaskPrincipal -UserId $User -LogonType S4U -RunLevel Limited

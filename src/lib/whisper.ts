@@ -19,7 +19,11 @@ import { devanagariToHinglish, hasDevanagari } from "./transliterate";
 import { romanizeHinglishWords } from "./gemini";
 import { extractAudioSegment } from "./media";
 
-const execFileAsync = promisify(execFile);
+const runFile = promisify(execFile);
+// Every external tool gets a time limit, so a stuck process fails the job
+// instead of holding it (and the render queue) forever.
+const execFileAsync = ((file: string, args: readonly string[], opts: object = {}) =>
+  runFile(file, args, { timeout: 60 * 60_000, windowsHide: true, ...opts })) as unknown as typeof runFile;
 
 export class WhisperError extends Error {
   constructor(message: string, public readonly cause?: unknown) {

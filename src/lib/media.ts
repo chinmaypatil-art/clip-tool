@@ -1,8 +1,13 @@
 import { execFile, spawn } from "child_process";
 import { promisify } from "util";
+import { existsSync } from "fs";
 import { getFfmpegPath, getFfprobePath, getYtDlpPath } from "./binaries";
 
-const execFileAsync = promisify(execFile);
+const runFile = promisify(execFile);
+// Every external tool gets a time limit, so a stuck process fails the job
+// instead of holding it (and the render queue) forever.
+const execFileAsync = ((file: string, args: readonly string[], opts: object = {}) =>
+  runFile(file, args, { timeout: 30 * 60_000, windowsHide: true, ...opts })) as unknown as typeof runFile;
 
 export class MediaError extends Error {
   constructor(message: string, public readonly cause?: unknown) {
@@ -98,7 +103,7 @@ export async function downloadVideo(
     try {
       return await runDownload(url, outPath, onProgress, signal);
     } catch (err) {
-      const refused = err instanceof MediaError && /HTTP Error 403|403: Forbidden/.test(err.message);
+      const refused = err instanceof MediaError && /HTTP 403/.test(err.message);
       if (!refused || attempt >= waits.length) throw err;
       onProgress?.(`YouTube refused the download; retrying in ${waits[attempt]}s\n`);
       await new Promise((r) => setTimeout(r, waits[attempt] * 1000));
@@ -140,6 +145,9 @@ function runDownload(
         "-o",
         outPath,
         "--no-playlist",
+        // A live stream never finishes downloading.
+        "--match-filter",
+        "!is_live",
         "--max-filesize",
         "2G",
       ],
@@ -147,6 +155,18 @@ function runDownload(
     );
     let stderr = "";
     let cancelled = false;
+    let stalled = false;
+
+    // yt-dlp can sit forever on a dead connection; no output for 5 minutes means stuck.
+    let watchdog: NodeJS.Timeout | undefined;
+    const feedWatchdog = () => {
+      clearTimeout(watchdog);
+      watchdog = setTimeout(() => {
+        stalled = true;
+        if (proc.pid) killProcessTree(proc.pid);
+      }, 5 * 60_000);
+    };
+    feedWatchdog();
 
     const onAbort = () => {
       cancelled = true;
@@ -154,26 +174,54 @@ function runDownload(
     };
     signal?.addEventListener("abort", onAbort, { once: true });
 
-    proc.stdout?.on("data", (d) => onProgress?.(d.toString()));
+    proc.stdout?.on("data", (d) => {
+      feedWatchdog();
+      onProgress?.(d.toString());
+    });
     proc.stderr?.on("data", (d) => {
+      feedWatchdog();
       stderr += d.toString();
       onProgress?.(d.toString());
     });
     proc.on("error", (err) => {
+      clearTimeout(watchdog);
       signal?.removeEventListener("abort", onAbort);
       reject(new MediaError(`Failed to launch yt-dlp: ${err.message}`, err));
     });
     proc.on("close", (code) => {
+      clearTimeout(watchdog);
       signal?.removeEventListener("abort", onAbort);
       if (cancelled) {
         reject(new CancelledError());
+      } else if (stalled) {
+        reject(new MediaError("The download stopped making progress. Please try again."));
+      } else if (code === 0 && !existsSync(outPath)) {
+        reject(new MediaError("Live streams can't be made into clips. Try again once the stream has ended."));
       } else if (code === 0) {
         resolve();
       } else {
-        reject(new MediaError(`yt-dlp exited with code ${code}: ${stderr.slice(-2000)}`));
+        console.error(`[media] yt-dlp exited with code ${code}: ${stderr.slice(-2000)}`);
+        reject(new MediaError(friendlyDownloadError(stderr)));
       }
     });
   });
+}
+
+/** Turns yt-dlp's error output into a sentence a non-technical user can act on. */
+function friendlyDownloadError(stderr: string): string {
+  const known: [RegExp, string][] = [
+    [/HTTP Error 403|403: Forbidden/, "YouTube refused the download (HTTP 403). Please try again in a few minutes."],
+    [/Private video/i, "This video is private. Use a public or unlisted video."],
+    [/Sign in to confirm your age|age-restricted/i, "This video is age-restricted, so it can't be downloaded. Upload the file instead."],
+    [/members-only|Join this channel/i, "This video is for channel members only. Upload the file instead."],
+    [/Video unavailable|has been removed|not available/i, "This video is unavailable (removed, blocked or region-locked)."],
+    [/Sign in to confirm you.re not a bot/i, "YouTube is temporarily blocking downloads from this server. Try again later or upload the file."],
+    [/Unsupported URL|is not a valid URL/i, "That link isn't a video this tool can download. Paste a YouTube link instead."],
+    [/File is larger than max-filesize/i, "This video is over 2 GB. Try a shorter video."],
+  ];
+  const hit = known.find(([pattern]) => pattern.test(stderr));
+  const lastLine = stderr.trim().split(/\r?\n/).pop()?.replace(/^ERROR:\s*/, "");
+  return hit ? hit[1] : `The video couldn't be downloaded: ${lastLine || "unknown error"}`;
 }
 
 export interface ProbeResult {

@@ -15,3 +15,9 @@ export async function accessToken(password: string): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`clipwise:${password}`));
   return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
 }
+
+/** True when the request carries a valid access cookie (or no password is set). */
+export async function hasAccess(request: { cookies: { get(name: string): { value: string } | undefined } }): Promise<boolean> {
+  const password = appPassword();
+  return !password || request.cookies.get(ACCESS_COOKIE)?.value === (await accessToken(password));
+}
