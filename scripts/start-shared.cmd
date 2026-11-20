@@ -24,6 +24,9 @@ if errorlevel 1 (
   powershell -NoProfile -Command "$o = Join-Path $env:LOCALAPPDATA 'Programs\Ollama\ollama.exe'; if (-not (Test-Path $o)) { $o = 'ollama' }; Start-Process -WindowStyle Hidden -FilePath $o -ArgumentList serve"
 )
 
+rem YouTube changes often; a stale yt-dlp is the most common reason downloads break.
+call npx tsx -e "import('./src/lib/binaries.ts').then(m=>require('child_process').spawnSync(m.getYtDlpPath(),['-U'],{stdio:'inherit'}))"
+
 set "TAILSCALE=%ProgramFiles%\Tailscale\tailscale.exe"
 if not exist "%TAILSCALE%" set "TAILSCALE=tailscale"
 "%TAILSCALE%" funnel --bg 3000
