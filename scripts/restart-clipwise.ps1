@@ -7,6 +7,8 @@ if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdenti
   exit
 }
 
+# Re-register first so the task always matches the current install script.
+& (Join-Path $PSScriptRoot 'install-boot-task.ps1') -User (Get-ScheduledTask -TaskName Clipwise).Principal.UserId | Out-Null
 Stop-ScheduledTask -TaskName Clipwise -ErrorAction SilentlyContinue
 $server = (Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue).OwningProcess | Select-Object -First 1
 if ($server) { Stop-Process -Id $server -Force }

@@ -19,11 +19,9 @@ if not errorlevel 1 (
 curl -s -o nul --max-time 3 http://127.0.0.1:11434/api/version
 if errorlevel 1 (
   echo Starting Ollama...
-  if exist "%LOCALAPPDATA%\Programs\Ollama\ollama.exe" (
-    start "" /b "%LOCALAPPDATA%\Programs\Ollama\ollama.exe" serve
-  ) else (
-    start "" /b ollama serve
-  )
+  rem Via Start-Process so Ollama doesn't inherit (and keep open) this
+  rem script's log file, which would stop the next restart from logging.
+  powershell -NoProfile -Command "$o = Join-Path $env:LOCALAPPDATA 'Programs\Ollama\ollama.exe'; if (-not (Test-Path $o)) { $o = 'ollama' }; Start-Process -WindowStyle Hidden -FilePath $o -ArgumentList serve"
 )
 
 set "TAILSCALE=%ProgramFiles%\Tailscale\tailscale.exe"

@@ -6,7 +6,8 @@ param([string]$User = "$env:COMPUTERNAME\$env:USERNAME")
 
 $root = Split-Path -Parent $PSScriptRoot
 $start = Join-Path $root 'scripts\start-shared.cmd'
-$log = Join-Path $root 'storage\clipwise.log'
+$log = Join-Path $root 'storage\logs\clipwise.log'
+New-Item -ItemType Directory -Force (Split-Path $log) | Out-Null
 
 $action = New-ScheduledTaskAction -Execute 'cmd.exe' -Argument "/c `"`"$start`" >> `"$log`" 2>&1`"" -WorkingDirectory $root
 $trigger = New-ScheduledTaskTrigger -AtStartup
