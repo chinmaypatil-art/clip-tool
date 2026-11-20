@@ -106,6 +106,13 @@ export async function downloadVideo(
         // Fetch DASH/HLS fragments in parallel instead of one at a time.
         "--concurrent-fragments",
         "8",
+        // YouTube now and then refuses a request (HTTP 403); a retry usually gets through.
+        "--retries",
+        "10",
+        "--fragment-retries",
+        "10",
+        "--extractor-retries",
+        "3",
         "--ffmpeg-location",
         getFfmpegPath(),
         "--merge-output-format",
