@@ -25,7 +25,7 @@ if errorlevel 1 (
 )
 
 rem YouTube changes often; a stale yt-dlp is the most common reason downloads break.
-call npx tsx -e "import('./src/lib/binaries.ts').then(m=>require('child_process').spawnSync(m.getYtDlpPath(),['-U'],{stdio:'inherit'}))"
+call npx tsx scripts\update-yt-dlp.mts
 
 set "TAILSCALE=%ProgramFiles%\Tailscale\tailscale.exe"
 if not exist "%TAILSCALE%" set "TAILSCALE=tailscale"
