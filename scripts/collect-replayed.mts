@@ -113,7 +113,8 @@ async function collect(url: string, done: Set<string>): Promise<number> {
   try {
     lines = (await extractYoutubeTranscript(url, dir)).segments;
   } finally {
-    await rm(dir, { recursive: true, force: true });
+    // Windows sometimes still holds the caption file; a leftover temp folder isn't worth losing the video.
+    await rm(dir, { recursive: true, force: true }).catch(() => {});
   }
   // The opening is replayed by everyone who restarts the video; it says nothing.
   const usable = bins.filter((b) => b.start_time >= Math.max(60, info.duration * 0.03));
