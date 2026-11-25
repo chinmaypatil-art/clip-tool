@@ -567,7 +567,7 @@ export async function renderAnalysisClip(analysisId: string, runId: string, clip
         : null;
     const keep = hook ? [hook, ...tight] : tight;
     const outLength = keptLength(keep);
-    await timer.time("cut", () => cutClip(sourcePath, segmentPath, startSeconds, endSeconds, keep));
+    await timer.time("cut", () => cutClip(sourcePath, segmentPath, startSeconds, endSeconds, keep, analysis.hideAreas));
     const captionPages = captionStyle
       ? createTikTokStyleCaptions({
           captions: remapCaptions(captions, keep),
@@ -590,6 +590,13 @@ export async function renderAnalysisClip(analysisId: string, runId: string, clip
       captionStyle,
       framing,
       segmentPath,
+      broll: (userEdit.broll ?? []).flatMap((b) =>
+        remapFraming([{ fromSeconds: b.fromSeconds - startSeconds, toSeconds: b.toSeconds - startSeconds, mode: "fit", focusX: 50 }], keep).map((r) => ({
+          path: path.join(dir, b.file),
+          fromSeconds: r.fromSeconds,
+          toSeconds: r.toSeconds,
+        }))
+      ),
       onStart: () => updateRunClip(analysisId, runId, clipId, { renderStartedAt: Date.now(), queueAhead: undefined }),
       onQueue: (ahead) => ahead && updateRunClip(analysisId, runId, clipId, { queueAhead: ahead }),
     })).finally(() => rm(segmentPath, { force: true }).catch(() => {}));

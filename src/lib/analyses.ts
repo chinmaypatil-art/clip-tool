@@ -60,6 +60,25 @@ export interface ModelRun {
   rawResponse: unknown;
 }
 
+export interface HideArea {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+/** Validates hide areas from the browser: up to 8 boxes inside the frame. */
+export function parseHideAreas(raw: unknown): HideArea[] {
+  if (!Array.isArray(raw)) return [];
+  const f = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : null);
+  return raw
+    .map((b) => (b && typeof b === "object" ? (b as Record<string, unknown>) : {}))
+    .map((b) => ({ x: f(b.x), y: f(b.y), w: f(b.w), h: f(b.h) }))
+    .filter((b): b is HideArea => b.x !== null && b.y !== null && b.w !== null && b.h !== null && b.w >= 0.05 && b.h >= 0.05)
+    .map((b) => ({ ...b, w: Math.min(b.w, 1 - b.x), h: Math.min(b.h, 1 - b.y) }))
+    .slice(0, 8);
+}
+
 export interface Analysis {
   /** Jobs ahead in the one-at-a-time GPU queue (picking / Whisper) while this waits. */
   queueAhead?: number;
@@ -79,6 +98,8 @@ export interface Analysis {
   runs: ModelRun[];
   /** source.mp4 was deleted after review, so clips can no longer be rendered. */
   sourceDeleted?: boolean;
+  /** Parts of the frame to blur in every clip (a stream's logo, subscriber counter); fractions of the frame. */
+  hideAreas?: HideArea[];
   /** Removed from history, but its reviews are kept as training data. */
   archived?: boolean;
   /** The video's own title (YouTube) or the uploaded file's name. */

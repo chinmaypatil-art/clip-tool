@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import path from "path";
 import { readdir, rm } from "fs/promises";
-import { loadAnalysis, analysisDir, forgetAnalysis, updateAnalysis } from "@/lib/analyses";
+import { loadAnalysis, analysisDir, forgetAnalysis, updateAnalysis, parseHideAreas } from "@/lib/analyses";
 import { forgetRenderBundle } from "@/lib/analysisPipeline";
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -9,6 +9,16 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
   const analysis = await loadAnalysis(id);
   if (!analysis) return NextResponse.json({ error: "Analysis not found." }, { status: 404 });
   return NextResponse.json(analysis);
+}
+
+/** Body: { hideAreas: [{x, y, w, h}] } (fractions of the frame); applies to clips rendered from now on. */
+export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+  if (!(await loadAnalysis(id))) return NextResponse.json({ error: "Analysis not found." }, { status: 404 });
+  const body = await req.json().catch(() => null);
+  const hideAreas = parseHideAreas(body?.hideAreas);
+  updateAnalysis(id, { hideAreas: hideAreas.length ? hideAreas : undefined });
+  return NextResponse.json({ ok: true, hideAreas });
 }
 
 export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {

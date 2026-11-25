@@ -348,24 +348,41 @@ export async function cutClip(
   startSeconds: number,
   endSeconds: number,
   /** Pieces to keep, in seconds from startSeconds (see tighten.ts); omitted keeps it all. */
-  keep?: Array<[number, number]>
+  keep?: Array<[number, number]>,
+  /** Boxes to blur out (fractions of the frame), e.g. a stream's logo or subscriber counter. */
+  hide: Array<{ x: number; y: number; w: number; h: number }> = []
 ): Promise<void> {
   const ffmpeg = getFfmpegPath();
   const duration = Math.max(0.1, endSeconds - startSeconds);
+  // Each box: a heavily blurred copy of that patch laid back over it.
+  const px = (v: number) => `trunc(${v.toFixed(4)}*%s/2)*2`;
+  const hideGraph = hide
+    .map((b, i) => {
+      const from = i === 0 ? "[0:v]" : `[h${i}]`;
+      const crop = `crop=${px(b.w).replace("%s", "iw")}:${px(b.h).replace("%s", "ih")}:${px(b.x).replace("%s", "iw")}:${px(b.y).replace("%s", "ih")}`;
+      return `${from}split[m${i}][p${i}];[p${i}]${crop},boxblur=luma_radius=20:luma_power=3[b${i}];` +
+        `[m${i}][b${i}]overlay=${px(b.x).replace("%s", "W")}:${px(b.y).replace("%s", "H")}[h${i + 1}];`;
+    })
+    .join("");
+  const video = hide.length ? `[h${hide.length}]` : "[0:v]";
   // A 15 ms fade on each side of every cut so joins don't click.
-  const joins =
-    keep && keep.length > 1
-      ? [
+  const pieces = keep && keep.length > 1 ? keep : null;
+  const joins = pieces
+    ? [
           "-filter_complex",
-          keep
+          hideGraph +
+          (hide.length ? `${video}split=${pieces.length}${pieces.map((_, i) => `[s${i}]`).join("")};` : "") +
+          pieces
             .map(([s, e], i) => {
               const fadeOut = Math.max(0, e - s - 0.015).toFixed(3);
-              return `[0:v]trim=${s.toFixed(3)}:${e.toFixed(3)},setpts=PTS-STARTPTS[v${i}];` +
+              return `${hide.length ? `[s${i}]` : "[0:v]"}trim=${s.toFixed(3)}:${e.toFixed(3)},setpts=PTS-STARTPTS[v${i}];` +
                 `[0:a]atrim=${s.toFixed(3)}:${e.toFixed(3)},asetpts=PTS-STARTPTS,afade=t=in:d=0.015,afade=t=out:st=${fadeOut}:d=0.015[a${i}];`;
             })
-            .join("") + `${keep.map((_, i) => `[v${i}][a${i}]`).join("")}concat=n=${keep.length}:v=1:a=1[v][a]`,
+            .join("") + `${pieces.map((_, i) => `[v${i}][a${i}]`).join("")}concat=n=${pieces.length}:v=1:a=1[v][a]`,
           "-map", "[v]", "-map", "[a]",
         ]
+    : hide.length
+      ? ["-filter_complex", hideGraph.replace(/;$/, ""), "-map", video, "-map", "0:a?"]
       : [];
   try {
     await execFileAsync(ffmpeg, [

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { BROLL_FILE } from "@/lib/clipEdit";
 import path from "path";
 import { stat } from "fs/promises";
 import { createReadStream } from "fs";
@@ -19,7 +20,8 @@ export async function GET(
   // makes the lookup safe against path traversal.
   let isThumbnail = false;
   // The editor previews edits by playing the source itself.
-  const match = (filename === "source.mp4" && !analysis.sourceDeleted) || analysis.runs.some((run) =>
+  // B-roll names are server-made (BROLL_FILE allows no path characters).
+  const match = (filename === "source.mp4" && !analysis.sourceDeleted) || BROLL_FILE.test(filename) || analysis.runs.some((run) =>
     run.clips.some((clip) => {
       if (clip.renderFilename === filename || clip.wordsFilename === filename || segmentFilename(run.id, clip.id) === filename) return true;
       if (clip.renderThumbnailFilename === filename) {
@@ -36,7 +38,9 @@ export async function GET(
   if (!stats) return NextResponse.json({ error: "File missing on disk." }, { status: 404 });
 
   const headers = {
-    "Content-Type": isThumbnail ? "image/jpeg" : filename.endsWith(".json") ? "application/json" : "video/mp4",
+    "Content-Type": isThumbnail || filename.endsWith(".jpg")
+      ? "image/jpeg"
+      : filename.endsWith(".png") ? "image/png" : filename.endsWith(".webp") ? "image/webp" : filename.endsWith(".json") ? "application/json" : "video/mp4",
     "Content-Disposition": dispositionFor(req, filename),
     "Accept-Ranges": "bytes",
   };

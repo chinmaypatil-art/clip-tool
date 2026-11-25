@@ -73,6 +73,8 @@ export interface RenderClipInput {
   framing: FramingSegment[];
   /** null renders no captions; undefined uses the default style. */
   captionStyle?: CaptionStyle | null;
+  /** Pictures over the clip; only the ffmpeg renderer draws them. */
+  broll?: Array<{ path: string; fromSeconds: number; toSeconds: number }>;
   onProgress?: (progress: number) => void;
   /** Called when this clip leaves the render queue and starts rendering. */
   onStart?: () => void;
@@ -91,6 +93,8 @@ export function renderClip(input: RenderClipInput): Promise<void> {
         input.onProgress?.(1);
         return;
       } catch (err) {
+        // Remotion can't draw B-roll; failing beats quietly dropping the user's pictures.
+        if (input.broll?.length) throw err;
         console.warn(`[render] ffmpeg render failed for "${input.outputPath}", using Remotion: ${describeError(err)}`);
       }
     }

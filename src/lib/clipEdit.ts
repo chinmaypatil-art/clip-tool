@@ -11,6 +11,16 @@ export interface LayoutOverride {
   focusX: number;
 }
 
+/** A picture the user uploaded, shown full-screen over these source seconds (voice and captions keep going). */
+export interface BrollItem {
+  file: string;
+  fromSeconds: number;
+  toSeconds: number;
+}
+
+/** Uploaded B-roll files: the server names them, so only this shape is ever trusted. */
+export const BROLL_FILE = /^broll-[0-9a-f-]{36}\.(png|jpg|webp)$/;
+
 /**
  * A user's edits to one clip, made in the editor by hand or by asking the AI.
  * Times are source seconds, so they survive moving the clip's edges.
@@ -28,6 +38,7 @@ export interface ClipEdit {
   layout?: LayoutOverride[];
   /** This clip's caption look; null = no captions; absent = the video's setting. */
   captionStyle?: CaptionStyle | null;
+  broll?: BrollItem[];
 }
 
 const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : null);
@@ -62,6 +73,13 @@ export function parseClipEdit(raw: unknown): ClipEdit {
         focusX: Math.min(100, Math.max(0, num(l.focusX) ?? 50)),
       }))
       .slice(0, 100);
+  }
+  if (Array.isArray(o.broll)) {
+    edit.broll = o.broll
+      .map((b) => (b && typeof b === "object" ? (b as Record<string, unknown>) : {}))
+      .filter((b) => typeof b.file === "string" && BROLL_FILE.test(b.file) && range([b.fromSeconds, b.toSeconds]))
+      .map((b) => ({ file: b.file as string, fromSeconds: b.fromSeconds as number, toSeconds: b.toSeconds as number }))
+      .slice(0, 30);
   }
   if (o.captionStyle === null) edit.captionStyle = null;
   else if (o.captionStyle && typeof o.captionStyle === "object") edit.captionStyle = parseCaptionStyle(o.captionStyle);

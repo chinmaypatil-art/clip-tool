@@ -65,6 +65,8 @@ export interface FfmpegRenderInput {
   /** null burns in no captions; undefined uses the default style. */
   captionStyle?: CaptionStyle | null;
   framing: FramingSegment[];
+  /** Pictures shown full-screen over these output seconds, under the captions. */
+  broll?: Array<{ path: string; fromSeconds: number; toSeconds: number }>;
 }
 
 let nvencOk: Promise<boolean> | null = null;
@@ -234,9 +236,14 @@ export async function renderClipFfmpeg(input: FfmpegRenderInput): Promise<void> 
   const graphPath = `${input.outputPath}.filter`;
   const d = input.durationSeconds;
   const captions = input.captionStyle !== null && input.captionPages.length > 0;
+  const broll = input.broll ?? [];
   const graph = [
-    videoGraph(input.framing, d, width, height).replace("[vout]", "[vf]"),
-    `[vf]${captions ? `ass='${filterPath(assPath)}',` : ""}format=yuv420p[vout]`,
+    videoGraph(input.framing, d, width, height).replace("[vout]", "[bv0]"),
+    ...broll.flatMap((b, i) => [
+      `[${i + 1}:v]scale=${WIDTH}:${HEIGHT}:force_original_aspect_ratio=increase,crop=${WIDTH}:${HEIGHT},setsar=1,format=yuv420p[br${i}]`,
+      `[bv${i}][br${i}]overlay=0:0:shortest=1:enable='between(t,${b.fromSeconds.toFixed(3)},${b.toSeconds.toFixed(3)})'[bv${i + 1}]`,
+    ]),
+    `[bv${broll.length}]${captions ? `ass='${filterPath(assPath)}',` : ""}format=yuv420p[vout]`,
     `[0:a]${await audioCleanup(input.segmentPath)},afade=t=in:d=${FADE_IN_SECONDS},afade=t=out:st=${Math.max(0, d - FADE_OUT_SECONDS).toFixed(3)}:d=${FADE_OUT_SECONDS}[aout]`,
   ].join(";\n");
   if (captions) await writeFile(assPath, buildAss(input.captionPages, input.captionStyle ?? DEFAULT_CAPTION_STYLE, input.framing));
@@ -250,6 +257,7 @@ export async function renderClipFfmpeg(input: FfmpegRenderInput): Promise<void> 
       [
         "-y", "-hide_banner", "-loglevel", "error",
         "-i", input.segmentPath,
+        ...broll.flatMap((b) => ["-loop", "1", "-framerate", String(FPS), "-i", b.path]),
         "-/filter_complex", graphPath,
         "-map", "[vout]", "-map", "[aout]",
         "-t", d.toFixed(3),

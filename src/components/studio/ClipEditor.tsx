@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Loader2, Pause, Play, Redo2, RotateCcw, Send, Sparkles, Undo2, Wand2, X } from "lucide-react";
+import { ImagePlus, Loader2, Pause, Play, Redo2, RotateCcw, Send, Sparkles, Trash2, Undo2, Wand2, X } from "lucide-react";
 import type { Caption } from "@remotion/captions";
 import type { AnalysisClip } from "@/lib/analyses";
 import type { ClipEdit, LayoutOverride } from "@/lib/clipEdit";
@@ -116,6 +116,32 @@ export function ClipEditor({
   const selWords = sel ? all.slice(Math.min(...sel), Math.max(...sel) + 1) : [];
   const selRange: Range | null = selWords.length ? [selWords[0].start, selWords.at(-1)!.end] : null;
   const selRemoved = selWords.length > 0 && selWords.every((w) => isCut(w, removed));
+
+  // B-roll: the user's own pictures over chosen words (nothing automatic).
+  const broll = edit.broll ?? [];
+  const brollNow = broll.find((b) => now >= b.fromSeconds && now < b.toSeconds);
+  const fileUrl = (name: string) => `/api/analyses/${analysisId}/files/${name}`;
+  const picker = useRef<HTMLInputElement>(null);
+  const brollFor = useRef<Range | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const addImage = async (file: File) => {
+    const range = brollFor.current;
+    if (!range) return;
+    setUploading(true);
+    setError("");
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      const res = await fetch(`/api/analyses/${analysisId}/broll`, { method: "POST", body: form });
+      const body: { file?: string; error?: string } = await res.json().catch(() => ({}));
+      if (!res.ok || !body.file) throw new Error(body.error ?? "Upload failed.");
+      change({ ...edit, broll: [...broll, { file: body.file, fromSeconds: range[0], toSeconds: range[1] }] });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Upload failed.");
+    } finally {
+      setUploading(false);
+    }
+  };
 
   // One-click cleanups: fillers ("um") and silences still in the clip.
   const fillerRanges: Range[] = all.filter((w) => inClip(w) && !isCut(w, removed) && isFiller(w.text)).map((w) => [w.start - 0.02, w.end + 0.02]);
@@ -320,6 +346,10 @@ export function ClipEditor({
               className={cn("h-full w-full cursor-pointer", vertical && layoutNow?.mode !== "fit" ? "object-cover" : "object-contain")}
               style={vertical && layoutNow?.mode === "fill" ? { objectPosition: `${layoutNow.focusX}% 50%` } : undefined}
             />
+            {brollNow && (
+              // eslint-disable-next-line @next/next/no-img-element -- a local, already-sized upload
+              <img src={fileUrl(brollNow.file)} alt="B-roll" className="pointer-events-none absolute inset-0 h-full w-full object-cover" />
+            )}
             {!playing && (
               <button onClick={togglePlay} className="absolute inset-0 m-auto flex h-14 w-14 items-center justify-center rounded-full bg-white/90 text-zinc-900 shadow-lg" aria-label="Play">
                 <Play size={22} className="ml-1" />
@@ -424,10 +454,54 @@ export function ClipEditor({
                     <Wand2 size={12} className="mr-1 inline" /> Remove silences ({silenceRanges.length})
                   </button>
                 </div>
+                <input
+                  ref={picker}
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp"
+                  className="hidden"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    e.target.value = "";
+                    if (f) void addImage(f);
+                  }}
+                />
+                {broll.length > 0 && (
+                  <div className="mb-4 space-y-1.5">
+                    <p className="text-[11px] uppercase tracking-wide text-zinc-500">Images (B-roll)</p>
+                    {broll.map((b, i) => (
+                      <div key={`${b.file}-${i}`} className="flex items-center gap-3 rounded-xl bg-white/[0.04] p-1.5 ring-1 ring-white/[0.08]">
+                        {/* eslint-disable-next-line @next/next/no-img-element -- a local upload */}
+                        <img src={fileUrl(b.file)} alt="" className="h-12 w-7 rounded-md object-cover" />
+                        <button className="flex-1 text-left text-xs tabular-nums text-zinc-300 hover:text-white" onClick={() => seek(b.fromSeconds)}>
+                          {clock(Math.max(0, b.fromSeconds - start))} – {clock(Math.max(0, b.toSeconds - start))}
+                        </button>
+                        <button
+                          className="rounded-lg p-2 text-zinc-500 transition hover:bg-red-500/15 hover:text-red-300"
+                          aria-label="Remove image"
+                          onClick={() => change({ ...edit, broll: broll.filter((_, k) => k !== i) })}
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
                 <div className={cn("sticky top-0 z-10 -mx-2 mb-3 flex flex-wrap items-center gap-1 rounded-xl bg-zinc-900/95 p-1.5 ring-1 ring-white/10 backdrop-blur transition", selRange ? "opacity-100" : "pointer-events-none opacity-40")}>
                   <span className="px-2 text-[11px] text-zinc-500">{selWords.length ? `${selWords.length} word${selWords.length > 1 ? "s" : ""}` : "Select words"}</span>
                   <button className={ghost} onClick={toggleRemove}>
                     {selRemoved ? "Restore" : "Cut"}
+                  </button>
+                  <button
+                    className={ghost}
+                    disabled={uploading}
+                    onClick={() => {
+                      brollFor.current = selRange;
+                      picker.current?.click();
+                    }}
+                    title="Show your own picture full-screen over these words"
+                  >
+                    {uploading ? <Loader2 size={12} className="mr-1 inline animate-spin" /> : <ImagePlus size={12} className="mr-1 inline" />}
+                    Add image
                   </button>
                   <button className={ghost} onClick={() => selRange && push({ start: selRange[0] - 0.05 })}>
                     Start here
@@ -570,6 +644,9 @@ export function ClipEditor({
           ))}
           {(edit.layout ?? []).map((l, i) => (
             <div key={i} className="absolute bottom-0 h-1 bg-sky-400" style={{ left: pct(l.fromSeconds), width: `calc(${pct(l.toSeconds)} - ${pct(l.fromSeconds)})` }} />
+          ))}
+          {broll.map((b, i) => (
+            <div key={`b${i}`} className="absolute top-0 h-1 bg-emerald-400" style={{ left: pct(b.fromSeconds), width: `calc(${pct(b.toSeconds)} - ${pct(b.fromSeconds)})` }} />
           ))}
           <div className="absolute inset-y-0 w-0.5 bg-white" style={{ left: pct(now) }} />
         </div>

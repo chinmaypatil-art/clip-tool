@@ -8,3 +8,11 @@ assert.deepEqual(f.map((s) => [s.mode, s.fromSeconds, s.toSeconds]), [["fill", 0
 const e = parseClipEdit({ removed: [[1, 2], [5, 3], "x"], hook: "yes", wordFixes: [{ ms: 10, text: "Ra{m}\n" }], layout: [{ fromSeconds: 0, toSeconds: 1, mode: "evil" }] });
 assert.deepEqual(e, { removed: [[1, 2]], wordFixes: [{ ms: 10, text: "Ra m  " }], layout: [] });
 console.log("clip edit ok");
+
+// B-roll: only server-made file names, valid ranges.
+{
+  const ok = "broll-0b6f3c1e-1111-4a2b-9c3d-123456789abc.png";
+  const e = parseClipEdit({ broll: [{ file: ok, fromSeconds: 1, toSeconds: 3 }, { file: "../.env.local", fromSeconds: 1, toSeconds: 3 }, { file: ok, fromSeconds: 5, toSeconds: 2 }] });
+  assert.deepEqual(e.broll, [{ file: ok, fromSeconds: 1, toSeconds: 3 }]);
+  console.log("broll ok");
+}
