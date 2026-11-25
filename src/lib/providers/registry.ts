@@ -9,6 +9,7 @@ import {
   createOllamaEndChecker,
   createOllamaClipChecker,
   createOllamaHookPicker,
+  createOllamaJsonChat,
   createOllamaRomanizer,
   createOllamaWindowedPicker,
   isOllama,
@@ -178,6 +179,13 @@ export async function getLocalHookPicker(providerId: string, model: string): Pro
   const def = (await listCustomProviders()).find((p) => p.id === providerId);
   if (!def || !isOllama(def.baseUrl)) return undefined;
   return createOllamaHookPicker(def, model);
+}
+
+/** A local model for the clip editor's Ask AI. Undefined for cloud models. */
+export async function getLocalJsonChat(providerId: string, model: string) {
+  const def = (await listCustomProviders()).find((p) => p.id === providerId);
+  if (!def || !isOllama(def.baseUrl)) return undefined;
+  return createOllamaJsonChat(def, model);
 }
 
 /** Local models pick clips window by window (see createOllamaWindowedPicker). Undefined for cloud models. */

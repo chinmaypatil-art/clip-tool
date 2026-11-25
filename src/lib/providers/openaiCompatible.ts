@@ -230,6 +230,29 @@ export function createOllamaHookPicker(def: CustomProviderDef, model: string): H
   };
 }
 
+/** One JSON-mode prompt to a local model, returning the raw answer (the clip editor's Ask AI). */
+export function createOllamaJsonChat(def: CustomProviderDef, model: string) {
+  const nativeUrl = def.baseUrl.replace(/\/v1\/?$/, "") + "/api/chat";
+  return async (prompt: string, maxTokens: number): Promise<string> => {
+    const res = await fetch(nativeUrl, {
+      method: "POST",
+      signal: AbortSignal.timeout(OLLAMA_TIMEOUT_MS),
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model,
+        messages: [{ role: "user", content: prompt }],
+        format: "json",
+        stream: false,
+        think: false,
+        options: { num_ctx: OLLAMA_NUM_CTX, num_predict: maxTokens, temperature: 0 },
+      }),
+    });
+    const body: { message?: { content?: string }; error?: string } = await res.json();
+    if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
+    return body.message?.content ?? "";
+  };
+}
+
 // Windows per scoring call: three few-minute excerpts fit the context with
 // room to spare.
 const SCORE_BATCH = 3;
