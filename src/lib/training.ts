@@ -2,7 +2,7 @@ import path from "path";
 import { appendFile, mkdir, writeFile } from "fs/promises";
 import { listAnalyses, type Analysis, type AnalysisClip, type ModelRun } from "./analyses";
 import { clipLengthRange } from "./clipLength";
-import { buildWindowClipPrompt } from "./providers/types";
+import { buildWindowClipPrompt, spanToLines } from "./providers/types";
 import { buildTranscriptWindows, pickWindowSeconds } from "./transcriptWindows";
 import type { TranscriptSegment } from "./transcript";
 
@@ -79,19 +79,25 @@ function toSftExamples(a: Analysis): object[] {
     examples.push({
       meta: { analysisId: a.id, from: w.startSeconds, to: w.endSeconds },
       messages: [
-        { role: "user", content: buildWindowClipPrompt(w.segments, range) },
+        { role: "user", content: buildWindowClipPrompt(w.segments, range, a.focus) },
         {
           role: "assistant",
           content: JSON.stringify({
-            clips: good.map((c) => ({
-              start_time: Number(c.startSeconds.toFixed(1)),
-              end_time: Number(c.endSeconds.toFixed(1)),
-              title: c.title,
-              hook: c.hook,
-              description: c.description,
-              viral_score: c.viralScore,
-              category: c.category,
-            })),
+            clips: good.flatMap((c) => {
+              const lines = spanToLines(w.segments, c.startSeconds, c.endSeconds);
+              return lines
+                ? [{
+                    from_line: lines.from,
+                    to_line: lines.to,
+                    title: c.title,
+                    hook: c.hook,
+                    description: c.description,
+                    reason: c.reasoning,
+                    viral_score: c.viralScore,
+                    category: c.category,
+                  }]
+                : [];
+            }),
           }),
         },
       ],

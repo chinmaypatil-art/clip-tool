@@ -25,7 +25,7 @@ export const CaptionsOverlay: React.FC<{ pages: TikTokPage[]; captionStyle?: unk
         justifyContent: justify,
         alignItems: "center",
         paddingTop: style.position === "top" ? 260 : 0,
-        paddingBottom: style.position === "bottom" ? 220 : 0,
+        paddingBottom: style.position === "bottom" ? 380 : 0,
         paddingLeft: 48,
         paddingRight: 48,
       }}

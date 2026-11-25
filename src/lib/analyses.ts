@@ -77,6 +77,8 @@ export interface Analysis {
   clipLength?: ClipLengthPreset;
   /** Caption look for this video's renders; null renders no captions. */
   captionStyle?: CaptionStyle | null;
+  /** What the user asked the picker to look for ("funny moments"). */
+  focus?: string;
 }
 
 const analyses = processSingleton("analyses", () => new Map<string, Analysis>());

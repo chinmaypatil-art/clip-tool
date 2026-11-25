@@ -11,8 +11,8 @@ import { extractYoutubeTranscript, captionsToSegments, referenceText, Transcript
 import { transcribeWav, WhisperError } from "./whisper";
 import { bundleForJob, renderClip, RenderError } from "./render";
 import { analyzeFraming } from "./framing";
-import { runAnalysis, listAllProviders, getLocalRomanizer, getLocalEndChecker, getLocalWindowedPicker } from "./providers/registry";
-import { ANALYSIS_PROMPT_VERSION, ProviderError, type EndChecker } from "./providers/types";
+import { runAnalysis, listAllProviders, getLocalRomanizer, getLocalEndChecker, getLocalWindowedPicker, getLocalClipChecker } from "./providers/registry";
+import { ANALYSIS_PROMPT_VERSION, ProviderError, type ClipChecker, type EndChecker } from "./providers/types";
 import {
   ensureAnalysisDir,
   analysisDir,
@@ -203,6 +203,7 @@ export async function runModelAgainstAnalysis(
         durationSeconds: analysis.videoDurationSeconds ?? Infinity,
         range: clipLengthRange(clipLength),
         sourcePath: path.join(analysisDir(analysisId), "source.mp4"),
+        focus: analysis.focus,
       })
     );
     const clips = result.clips.map((c): AnalysisClip => ({ ...c, id: randomUUID(), renderStatus: "pending" }));
@@ -236,6 +237,7 @@ export async function pickClips({
   durationSeconds,
   range,
   sourcePath,
+  focus,
 }: {
   provider: Provider;
   model: string;
@@ -243,20 +245,55 @@ export async function pickClips({
   durationSeconds: number;
   range: ClipLengthRange;
   sourcePath: string;
+  /** What the user asked for ("funny moments"); local models only. */
+  focus?: string;
 }) {
   // Local models read the transcript a few minutes at a time; cloud models
   // (the benchmark) still get it whole in one call.
   const windowed = await getLocalWindowedPicker(provider, model);
   const result = windowed
     ? {
-        ...(await windowed({ segments, targetCount: TARGET_CLIP_COUNT, range })),
+        ...(await windowed({ segments, targetCount: TARGET_CLIP_COUNT + SPARE_PICKS, range, focus })),
         meta: { keyId: "local", keyLabel: "local (no key)", attempts: 1 },
       }
     : await runAnalysis(provider, model, segments, TARGET_CLIP_COUNT, range);
   const minPick = windowed ? Math.min(LOCAL_MIN_MOMENT_SECONDS, range.minSeconds * SHORT_TOLERANCE) : range.minSeconds * SHORT_TOLERANCE;
-  const picked = keepBest(clampAndDedupe(result.clips, durationSeconds, range, segments, minPick), TARGET_CLIP_COUNT);
-  const clips = await refineEdges(picked, range, segments, sourcePath, await getLocalEndChecker(provider, model));
-  return { ...result, clips };
+  const picked = keepBest(clampAndDedupe(result.clips, durationSeconds, range, segments, minPick), TARGET_CLIP_COUNT + SPARE_PICKS);
+  const refined = await refineEdges(picked, range, segments, sourcePath, await getLocalEndChecker(provider, model));
+  const checked = await rankByCheck(refined, segments, await getLocalClipChecker(provider, model));
+  return { ...result, clips: keepBest(checked, TARGET_CLIP_COUNT) };
+}
+
+// Extra windows the local model picks from, so the final check has spares
+// to rank the weakest clips out with.
+const SPARE_PICKS = 2;
+
+/**
+ * Has the local model read each finished clip on its own, as a viewer would,
+ * and folds that score into the clip's rank, so keepBest leaves out the
+ * weakest. Ranks, never deletes: an untuned gemma3:12b judged nearly every
+ * clip as broken. A check that errors leaves its clip's score as it was.
+ */
+async function rankByCheck<T extends { startSeconds: number; endSeconds: number; viralScore: number; title: string }>(
+  clips: T[],
+  segments: TranscriptSegment[],
+  check: ClipChecker | undefined
+): Promise<T[]> {
+  if (!check) return clips;
+  const out: T[] = [];
+  for (const clip of clips) {
+    const text = referenceText(segments, clip.startSeconds, clip.endSeconds);
+    try {
+      if (!text) throw new Error("no transcript text");
+      const { score, problem } = await check(text);
+      console.log(`[analysisPipeline] check ${score}/100 "${clip.title}"${problem ? `: ${problem}` : ""}`);
+      out.push({ ...clip, viralScore: Math.round((clip.viralScore + score) / 2) });
+    } catch (err) {
+      console.error("[analysisPipeline] clip check failed, keeping its score:", err);
+      out.push(clip);
+    }
+  }
+  return out;
 }
 
 function clampAndDedupe<T extends { startSeconds: number; endSeconds: number; viralScore: number }>(

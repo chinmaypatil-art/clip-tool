@@ -38,6 +38,8 @@ export function CreateView({ onStarted }: { onStarted: (analysisId: string) => v
   const [dragging, setDragging] = useState(false);
   const [settings, setSettings] = useState<Settings>({ clipLength: DEFAULT_CLIP_LENGTH, captions: true, captionStyle: DEFAULT_CAPTION_STYLE });
   const [styleOpen, setStyleOpen] = useState(false);
+  // Per video, so not remembered with the other settings.
+  const [focus, setFocus] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -61,7 +63,7 @@ export function CreateView({ onStarted }: { onStarted: (analysisId: string) => v
     setSubmitting(true);
     setError(null);
     try {
-      const body = { oneClick: true, ...settings };
+      const body = { oneClick: true, ...settings, focus: focus.trim() };
       let res: Response;
       if (file) {
         const form = new FormData();
@@ -80,6 +82,7 @@ export function CreateView({ onStarted }: { onStarted: (analysisId: string) => v
       if (!res.ok || !data?.analysisId) throw new Error(data?.error ?? "Couldn't start. Try again.");
       setUrl("");
       setFile(null);
+      setFocus("");
       onStarted(data.analysisId);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -164,6 +167,15 @@ export function CreateView({ onStarted }: { onStarted: (analysisId: string) => v
           />
         </div>
       </div>
+      <input
+        value={focus}
+        onChange={(e) => setFocus(e.target.value)}
+        onKeyDown={(e) => e.key === "Enter" && submit()}
+        maxLength={120}
+        aria-label="What to look for (optional)"
+        placeholder="What to look for (optional): e.g. funny moments, money advice"
+        className="mt-2 w-full rounded-xl border border-white/10 bg-white/[0.02] px-4 py-2.5 text-sm text-zinc-100 placeholder:text-zinc-600 focus:border-white/25 focus:outline-none"
+      />
       {error && <p className="mt-3 text-center text-sm text-red-400">{error}</p>}
 
       <div className="mt-6 flex flex-wrap items-center justify-center gap-x-6 gap-y-3 text-sm">

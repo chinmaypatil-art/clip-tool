@@ -120,6 +120,12 @@ export function ClipTile({
           {shortOf !== undefined && length < shortOf - 1 && <span className="text-amber-400/80">· shorter than asked</span>}
         </div>
         {clip.hook && <p className="mt-1.5 line-clamp-2 text-xs italic text-zinc-500">&ldquo;{clip.hook}&rdquo;</p>}
+        {clip.reasoning && (
+          <p className="mt-1 line-clamp-3 text-xs text-zinc-400">
+            <span className="text-zinc-500">Why: </span>
+            {clip.reasoning}
+          </p>
+        )}
 
         <div className="mt-3 flex gap-1.5">
           {fileUrl && clip.renderStatus === "done" && (

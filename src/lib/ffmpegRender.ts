@@ -126,7 +126,7 @@ function assStyle(style: CaptionStyle): string {
       : style.background === "shadow"
         ? [1, 1, Math.round(size * 0.06), "&H00000000"]
         : [1, Math.max(3, Math.round(size * 0.05)), 0, "&H00000000"];
-  const [alignment, marginV] = style.position === "top" ? [8, 260] : style.position === "middle" ? [5, 0] : [2, 220];
+  const [alignment, marginV] = style.position === "top" ? [8, 260] : style.position === "middle" ? [5, 0] : [2, 380];
   const color = assColor(style.color);
   return `Style: Caption,${font.family},${size},${color},${color},${outlineColor},&H80000000,${bold},0,0,0,100,100,0,0,${borderStyle},${outline},${shadow},${alignment},48,48,${marginV},1`;
 }

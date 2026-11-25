@@ -20,7 +20,7 @@ import os from "os";
 import { getYtDlpPath } from "../src/lib/binaries";
 import { extractYoutubeTranscript, type TranscriptSegment } from "../src/lib/transcript";
 import { buildTranscriptWindows, pickWindowSeconds } from "../src/lib/transcriptWindows";
-import { buildWindowClipPrompt } from "../src/lib/providers/types";
+import { buildWindowClipPrompt, spanToLines } from "../src/lib/providers/types";
 import { clipLengthRange } from "../src/lib/clipLength";
 
 const run = promisify(execFile);
@@ -93,14 +93,14 @@ async function describe(text: string) {
       format: "json",
       messages: [{
         role: "user",
-        content: `This is a short-form clip transcript:\n\n${text}\n\nReturn ONLY JSON: {"title": punchy working title, 10 words max, "description": what happens, ONE short sentence, "category": short label like "personal story", "hot take", "advice", "humor"}`,
+        content: `This is a short-form clip transcript:\n\n${text}\n\nReturn ONLY JSON: {"title": punchy working title, 10 words max, "description": what happens, ONE short sentence, "reason": why a viewer would stop scrolling and watch to the end, ONE short sentence, "category": short label like "personal story", "hot take", "advice", "humor"}`,
       }],
     }),
   });
   if (!res.ok) throw new Error(`Ollama ${res.status}`);
   const j = JSON.parse((await res.json()).message.content);
-  if (![j.title, j.description, j.category].every((v) => typeof v === "string" && v)) throw new Error("bad metadata");
-  return j as { title: string; description: string; category: string };
+  if (![j.title, j.description, j.reason, j.category].every((v) => typeof v === "string" && v)) throw new Error("bad metadata");
+  return j as { title: string; description: string; reason: string; category: string };
 }
 
 async function collect(url: string, done: Set<string>): Promise<number> {
@@ -128,10 +128,12 @@ async function collect(url: string, done: Set<string>): Promise<number> {
       if (!span) continue;
       const text = w.segments.filter((s) => s.endMs / 1000 > span.start && s.startMs / 1000 < span.end).map((s) => s.text).join(" ");
       if (AD.test(text)) continue;
-      const { title, description, category } = await describe(text);
+      const lines = spanToLines(w.segments, span.start, span.end);
+      if (!lines) continue;
+      const { title, description, reason, category } = await describe(text);
       // The hook is the clip's real opening line, as the pick prompt asks for.
       const hook = text.split(/\s+/).slice(0, 12).join(" ");
-      clips = [{ start_time: +span.start.toFixed(1), end_time: +span.end.toFixed(1), title, hook, description, viral_score: Math.round(peak.value * 100), category }];
+      clips = [{ from_line: lines.from, to_line: lines.to, title, hook, description, reason, viral_score: Math.round(peak.value * 100), category }];
       picks++;
     } else if (peak.value > 0 && peak.value < FLAT && empties < picks) {
       clips = []; // as many "nothing here" examples as picks, so the model doesn't learn to always pick

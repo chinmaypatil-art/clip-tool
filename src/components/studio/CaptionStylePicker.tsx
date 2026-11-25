@@ -34,7 +34,7 @@ export function CaptionPreview({ style, width = 168 }: { style: CaptionStyle | n
           className="absolute inset-x-0 flex justify-center"
           style={{
             top: style.position === "top" ? 260 * scale : style.position === "middle" ? "50%" : undefined,
-            bottom: style.position === "bottom" ? 220 * scale : undefined,
+            bottom: style.position === "bottom" ? 380 * scale : undefined,
             transform: style.position === "middle" ? "translateY(-50%)" : undefined,
             padding: `0 ${48 * scale}px`,
           }}

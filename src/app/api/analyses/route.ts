@@ -114,8 +114,11 @@ async function startVideo(req: NextRequest) {
   return NextResponse.json({ error: "Unsupported content type." }, { status: 400 });
 }
 
-function applySettings(id: string, body: { clipLength?: unknown; captions?: unknown; captionStyle?: unknown }) {
+function applySettings(id: string, body: { clipLength?: unknown; captions?: unknown; captionStyle?: unknown; focus?: unknown }) {
+  // Goes into the model's prompt: one short line, no quotes to break out of it.
+  const focus = typeof body.focus === "string" ? body.focus.replace(/["\s]+/g, " ").trim().slice(0, 120) : "";
   updateAnalysis(id, {
+    focus: focus || undefined,
     oneClick: true,
     clipLength: isClipLengthPreset(body.clipLength) ? body.clipLength : DEFAULT_CLIP_LENGTH,
     captionStyle: body.captions === false ? null : parseCaptionStyle(body.captionStyle),

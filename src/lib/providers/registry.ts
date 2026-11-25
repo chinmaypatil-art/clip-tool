@@ -7,6 +7,7 @@ import { getEligibleKeys, advanceRotation, markRateLimited, markInvalid, recordU
 import {
   createOpenAICompatibleProvider,
   createOllamaEndChecker,
+  createOllamaClipChecker,
   createOllamaRomanizer,
   createOllamaWindowedPicker,
   isOllama,
@@ -14,7 +15,7 @@ import {
 import type { Romanizer } from "../whisper";
 import type { Provider } from "../keystore";
 import type { TranscriptSegment } from "../transcript";
-import type { AnalyzeResult, EndChecker, WindowedPicker } from "./types";
+import type { AnalyzeResult, ClipChecker, EndChecker, WindowedPicker } from "./types";
 import type { ClipLengthRange } from "../clipLength";
 
 export const PROVIDERS: Record<string, ModelProvider> = {
@@ -162,6 +163,13 @@ export async function getLocalEndChecker(providerId: string, model: string): Pro
   const def = (await listCustomProviders()).find((p) => p.id === providerId);
   if (!def || !isOllama(def.baseUrl)) return undefined;
   return createOllamaEndChecker(def, model);
+}
+
+/** A local model's final check of each picked clip. Undefined for cloud models. */
+export async function getLocalClipChecker(providerId: string, model: string): Promise<ClipChecker | undefined> {
+  const def = (await listCustomProviders()).find((p) => p.id === providerId);
+  if (!def || !isOllama(def.baseUrl)) return undefined;
+  return createOllamaClipChecker(def, model);
 }
 
 /** Local models pick clips window by window (see createOllamaWindowedPicker). Undefined for cloud models. */

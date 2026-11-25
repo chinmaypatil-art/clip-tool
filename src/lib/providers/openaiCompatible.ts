@@ -2,7 +2,10 @@ import OpenAI, { AuthenticationError, PermissionDeniedError, RateLimitError } fr
 import type { ModelProvider, AnalyzeResult, NormalizedClip, WindowedPicker } from "./types";
 import {
   buildAnalysisPrompt,
+  buildClipCheckPrompt,
   buildEndCheckPrompt,
+  parseClipCheck,
+  type ClipChecker,
   buildWindowClipPrompt,
   buildWindowScorePrompt,
   parseEndCheck,
@@ -179,6 +182,29 @@ export function createOllamaEndChecker(def: CustomProviderDef, model: string): E
   };
 }
 
+/** Asks a local Ollama model whether a picked clip stands alone, hooks and lands its point. */
+export function createOllamaClipChecker(def: CustomProviderDef, model: string): ClipChecker {
+  const nativeUrl = def.baseUrl.replace(/\/v1\/?$/, "") + "/api/chat";
+  return async (text) => {
+    const res = await fetch(nativeUrl, {
+      method: "POST",
+      signal: AbortSignal.timeout(OLLAMA_TIMEOUT_MS),
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model,
+        messages: [{ role: "user", content: buildClipCheckPrompt(text) }],
+        format: "json",
+        stream: false,
+        think: false,
+        options: { num_ctx: OLLAMA_NUM_CTX, num_predict: 96, temperature: 0 },
+      }),
+    });
+    const body: { message?: { content?: string }; error?: string } = await res.json();
+    if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
+    return parseClipCheck(body.message?.content ?? "");
+  };
+}
+
 // Windows per scoring call: three few-minute excerpts fit the context with
 // room to spare.
 const SCORE_BATCH = 3;
@@ -238,7 +264,7 @@ export function createOllamaWindowedPicker(def: CustomProviderDef, model: string
     return null;
   };
 
-  return async ({ segments, targetCount, range }) => {
+  return async ({ segments, targetCount, range, focus }) => {
     const start = Date.now();
     usage = { inputTokens: 0, outputTokens: 0 };
     const windows = buildTranscriptWindows(segments, pickWindowSeconds(range));
@@ -248,7 +274,7 @@ export function createOllamaWindowedPicker(def: CustomProviderDef, model: string
       const batch = windows.slice(b, b + SCORE_BATCH);
       const scored = await attempt(
         `scoring windows ${batch.map((w) => w.id).join(",")}`,
-        async (t) => parseWindowScores(await chat(buildWindowScorePrompt(batch), t, SCORE_MAX_TOKENS)),
+        async (t) => parseWindowScores(await chat(buildWindowScorePrompt(batch, focus), t, SCORE_MAX_TOKENS)),
         0.2
       );
       for (const [id, score] of scored ?? []) scores.set(id, score);
@@ -266,8 +292,8 @@ export function createOllamaWindowedPicker(def: CustomProviderDef, model: string
       const found = await attempt(
         `clips for window ${w.id}`,
         async (t) => {
-          text = await chat(buildWindowClipPrompt(w.segments, range), t, CLIPS_MAX_TOKENS);
-          return parseNormalizedClips(text);
+          text = await chat(buildWindowClipPrompt(w.segments, range, focus), t, CLIPS_MAX_TOKENS);
+          return parseNormalizedClips(text, w.segments);
         },
         0.4
       );
