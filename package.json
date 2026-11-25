@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "next dev --webpack",
     "build": "next build --webpack",
-    "start": "next start",
+    "start": "node scripts/swap-build.mjs && next start",
     "lint": "eslint"
   },
   "dependencies": {

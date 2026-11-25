@@ -3,9 +3,9 @@ const QUIET_MS = 5 * 60_000;
 
 /**
  * Picks up new builds without anyone restarting the server by hand: when
- * `npm run build` writes a new .next/BUILD_ID, this process exits once no job
+ * `npm run build` writes a finished build to .next-new, this process exits once no job
  * is busy AND nobody has used the site for 5 minutes (open pages poll every
- * few seconds), and start-shared.cmd's loop starts it again on the new build.
+ * few seconds), and start-shared.cmd's loop swaps it in (scripts/swap-build.mjs) and starts again.
  * A user never sees the restart.
  */
 export async function register() {
@@ -15,13 +15,10 @@ export async function register() {
   const { listAnalyses } = await import("./lib/analyses");
   const { quietFor } = await import("./lib/activity");
 
-  const buildIdFile = path.join(process.cwd(), ".next", "BUILD_ID");
-  const readBuildId = () => readFile(buildIdFile, "utf8").catch(() => null);
-  const running = await readBuildId();
+  const newBuild = path.join(process.cwd(), ".next-new", "BUILD_ID");
 
   setInterval(async () => {
-    const latest = await readBuildId();
-    if (!latest || latest === running || !quietFor(QUIET_MS)) return;
+    if (!(await readFile(newBuild, "utf8").catch(() => null)) || !quietFor(QUIET_MS)) return;
     const busy = (await listAnalyses()).some(
       (a) =>
         a.status === "extracting_transcript" ||
