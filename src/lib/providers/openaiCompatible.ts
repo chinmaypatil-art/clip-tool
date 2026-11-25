@@ -3,6 +3,9 @@ import type { ModelProvider, AnalyzeResult, NormalizedClip, WindowedPicker } fro
 import {
   buildAnalysisPrompt,
   buildClipCheckPrompt,
+  buildHookPrompt,
+  parseHook,
+  type HookPicker,
   buildEndCheckPrompt,
   parseClipCheck,
   type ClipChecker,
@@ -202,6 +205,28 @@ export function createOllamaClipChecker(def: CustomProviderDef, model: string): 
     const body: { message?: { content?: string }; error?: string } = await res.json();
     if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
     return parseClipCheck(body.message?.content ?? "");
+  };
+}
+
+export function createOllamaHookPicker(def: CustomProviderDef, model: string): HookPicker {
+  const nativeUrl = def.baseUrl.replace(/\/v1\/?$/, "") + "/api/chat";
+  return async (lines) => {
+    const res = await fetch(nativeUrl, {
+      method: "POST",
+      signal: AbortSignal.timeout(OLLAMA_TIMEOUT_MS),
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model,
+        messages: [{ role: "user", content: buildHookPrompt(lines) }],
+        format: "json",
+        stream: false,
+        think: false,
+        options: { num_ctx: OLLAMA_NUM_CTX, num_predict: 32, temperature: 0 },
+      }),
+    });
+    const body: { message?: { content?: string }; error?: string } = await res.json();
+    if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
+    return parseHook(body.message?.content ?? "", lines.length);
   };
 }
 

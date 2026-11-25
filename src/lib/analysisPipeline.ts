@@ -1,7 +1,7 @@
 import path from "path";
 import { copyFile, rm } from "fs/promises";
 import { createTikTokStyleCaptions, type Caption } from "@remotion/captions";
-import { keepRanges, keptLength, remapCaptions, remapFraming } from "./tighten";
+import { hookToSentence, keepRanges, keptLength, remapCaptions, remapFraming } from "./tighten";
 import { randomUUID } from "crypto";
 import { createLimiter } from "./limit";
 import { StageTimer } from "./timing";
@@ -13,8 +13,8 @@ import { extractYoutubeTranscript, captionsToSegments, referenceText, Transcript
 import { transcribeWav, WhisperError } from "./whisper";
 import { bundleForJob, renderClip, RenderError } from "./render";
 import { analyzeFraming } from "./framing";
-import { runAnalysis, listAllProviders, getLocalRomanizer, getLocalEndChecker, getLocalWindowedPicker, getLocalClipChecker } from "./providers/registry";
-import { ANALYSIS_PROMPT_VERSION, ProviderError, type ClipChecker, type EndChecker } from "./providers/types";
+import { runAnalysis, listAllProviders, getLocalRomanizer, getLocalEndChecker, getLocalWindowedPicker, getLocalClipChecker, getLocalHookPicker } from "./providers/registry";
+import { ANALYSIS_PROMPT_VERSION, ProviderError, type ClipChecker, type EndChecker, type HookPicker } from "./providers/types";
 import {
   ensureAnalysisDir,
   analysisDir,
@@ -266,7 +266,45 @@ export async function pickClips({
   const picked = keepBest(clampAndDedupe(result.clips, durationSeconds, range, segments, minPick), TARGET_CLIP_COUNT + SPARE_PICKS);
   const refined = await refineEdges(picked, range, segments, sourcePath, await getLocalEndChecker(provider, model));
   const checked = await rankByCheck(refined, segments, await getLocalClipChecker(provider, model));
-  return { ...result, clips: keepBest(checked, TARGET_CLIP_COUNT) };
+  const final = keepBest(checked, TARGET_CLIP_COUNT);
+  return { ...result, clips: await addHooks(final, segments, await getLocalHookPicker(provider, model)) };
+}
+
+// A cold open shorter than this is a fragment; longer delays the clip itself.
+const HOOK_MIN_SECONDS = 2;
+const HOOK_MAX_SECONDS = 8;
+
+/**
+ * Hook-first: the local model names the clip's strongest line, which then
+ * plays once before the clip starts (see renderAnalysisClip). A clip whose
+ * opening is already its best line, or whose pick is too short/long, keeps
+ * its own opening.
+ */
+async function addHooks<T extends { startSeconds: number; endSeconds: number; title: string }>(
+  clips: T[],
+  segments: TranscriptSegment[],
+  pick: HookPicker | undefined
+): Promise<Array<T & { hookStartSeconds?: number; hookEndSeconds?: number }>> {
+  if (!pick) return clips;
+  const out: Array<T & { hookStartSeconds?: number; hookEndSeconds?: number }> = [];
+  for (const clip of clips) {
+    const lines = segments.filter((s) => s.endMs / 1000 > clip.startSeconds + 0.5 && s.startMs / 1000 < clip.endSeconds - 0.5);
+    try {
+      const n = lines.length > 2 ? await pick(lines) : 0;
+      const line = lines[n - 1];
+      const from = line && Math.max(clip.startSeconds, line.startMs / 1000);
+      const to = line && Math.min(clip.endSeconds, line.endMs / 1000);
+      if (line && to - from >= HOOK_MIN_SECONDS && to - from <= HOOK_MAX_SECONDS && from > clip.startSeconds + 1) {
+        console.log(`[analysisPipeline] hook for "${clip.title}": ${line.text}`);
+        out.push({ ...clip, hookStartSeconds: from, hookEndSeconds: to });
+        continue;
+      }
+    } catch (err) {
+      console.error("[analysisPipeline] hook pick failed, keeping the clip's opening:", err);
+    }
+    out.push(clip);
+  }
+  return out;
 }
 
 // Extra windows the local model picks from, so the final check has spares
@@ -490,7 +528,15 @@ export async function renderAnalysisClip(analysisId: string, runId: string, clip
     const segmentPath = path.join(dir, segment);
     // Fillers and long pauses come out using the caption words' timings, so a
     // clip rendered without captions keeps its pauses.
-    const keep = keepRanges(captions, clipLength);
+    const tight = keepRanges(captions, clipLength);
+    // Hook-first: the chosen line plays once, then the clip from its start.
+    // Skipped if a reviewer has since moved the edges past it.
+    const hook =
+      clip.hookStartSeconds !== undefined && clip.hookEndSeconds !== undefined &&
+      clip.hookStartSeconds >= startSeconds && clip.hookEndSeconds <= endSeconds
+        ? hookToSentence(captions, [Math.max(0, clip.hookStartSeconds - startSeconds - 0.05), clip.hookEndSeconds - startSeconds + 0.15], clipLength)
+        : null;
+    const keep = hook ? [hook, ...tight] : tight;
     const outLength = keptLength(keep);
     await timer.time("cut", () => cutClip(sourcePath, segmentPath, startSeconds, endSeconds, keep));
     const captionPages = captionStyle

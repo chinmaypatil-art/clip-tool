@@ -24,6 +24,9 @@ export interface NormalizedClip {
   viralScore: number;
   category: string;
   engagementPotential: string;
+  /** Hook-first: this line (source seconds, inside the clip) plays before the clip. */
+  hookStartSeconds?: number;
+  hookEndSeconds?: number;
 }
 
 export interface AnalyzeResult {
@@ -303,4 +306,29 @@ export function parseEndCheck(jsonText: string, before: number, after: number): 
   const stripped = jsonText.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/i, "");
   const n = Number((JSON.parse(stripped) as { end_after?: unknown })?.end_after);
   return Number.isFinite(n) ? Math.max(-(before - 1), Math.min(after, Math.round(n))) : 0;
+}
+
+/** Which line of a clip (1-based) makes the best cold open; 0 = keep the clip's own opening. */
+export type HookPicker = (lines: TranscriptSegment[]) => Promise<number>;
+
+/**
+ * Hook-first: the line played before the clip starts, like a trailer's cold
+ * open. It must make sense heard first and make the viewer want the rest.
+ */
+export function buildHookPrompt(lines: TranscriptSegment[]): string {
+  return `This is the transcript of a short vertical clip (Reels/Shorts), one numbered line per caption:
+
+${formatLines(lines)}
+
+We will play ONE line at the very start as a teaser, before the clip plays from the beginning. Pick the line that most makes a scrolling viewer stop: a surprising claim, a strong opinion, an emotional moment or a question the clip answers. It must be a complete thought that makes sense on its own, and not line 1 (the clip already starts there).
+
+If no line is clearly stronger than the opening, answer 0.
+
+Return ONLY JSON: {"line": number}`;
+}
+
+export function parseHook(jsonText: string, count: number): number {
+  const stripped = jsonText.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/i, "");
+  const n = Number((JSON.parse(stripped) as { line?: unknown }).line);
+  return Number.isInteger(n) && n >= 2 && n <= count ? n : 0;
 }

@@ -8,6 +8,7 @@ import {
   createOpenAICompatibleProvider,
   createOllamaEndChecker,
   createOllamaClipChecker,
+  createOllamaHookPicker,
   createOllamaRomanizer,
   createOllamaWindowedPicker,
   isOllama,
@@ -15,7 +16,7 @@ import {
 import type { Romanizer } from "../whisper";
 import type { Provider } from "../keystore";
 import type { TranscriptSegment } from "../transcript";
-import type { AnalyzeResult, ClipChecker, EndChecker, WindowedPicker } from "./types";
+import type { AnalyzeResult, ClipChecker, EndChecker, HookPicker, WindowedPicker } from "./types";
 import type { ClipLengthRange } from "../clipLength";
 
 export const PROVIDERS: Record<string, ModelProvider> = {
@@ -170,6 +171,13 @@ export async function getLocalClipChecker(providerId: string, model: string): Pr
   const def = (await listCustomProviders()).find((p) => p.id === providerId);
   if (!def || !isOllama(def.baseUrl)) return undefined;
   return createOllamaClipChecker(def, model);
+}
+
+/** A local model's pick of each clip's cold-open line. Undefined for cloud models. */
+export async function getLocalHookPicker(providerId: string, model: string): Promise<HookPicker | undefined> {
+  const def = (await listCustomProviders()).find((p) => p.id === providerId);
+  if (!def || !isOllama(def.baseUrl)) return undefined;
+  return createOllamaHookPicker(def, model);
 }
 
 /** Local models pick clips window by window (see createOllamaWindowedPicker). Undefined for cloud models. */

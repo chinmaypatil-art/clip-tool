@@ -1,6 +1,6 @@
 // Self-check for filler/pause trimming: npx tsx scripts/check-tighten.mts
 import assert from "node:assert/strict";
-import { keepRanges, keptLength, mapTime, remapCaptions, remapFraming } from "../src/lib/tighten";
+import { hookToSentence, keepRanges, keptLength, mapTime, remapCaptions, remapFraming } from "../src/lib/tighten";
 
 const w = (text: string, s: number, e: number) => ({ text, startMs: s * 1000, endMs: e * 1000, timestampMs: null, confidence: null });
 
@@ -23,4 +23,14 @@ assert.deepEqual(keepRanges([], 10), [[0, 10]]);
 
 const shots = remapFraming([{ fromSeconds: 0, toSeconds: 3, mode: "fill", focusX: 50 }, { fromSeconds: 3, toSeconds: 8, mode: "split", focusX: 50 }], keep);
 assert.equal(+shots[1].fromSeconds.toFixed(2), 2.1);
+// Hook-first: a later line plays first, then the clip from its start.
+const hookFirst: [number, number][] = [[5.9, 7], [0, 2.1], [5.9, 8]];
+assert.deepEqual(remapCaptions(words, hookFirst).map((c) => [c.text, c.startMs]), [["So", 100], ["yes.", 600], ["Hello", 1300], ["there.", 2100], ["So", 3300], ["yes.", 3800]]);
+const hookShots = remapFraming([{ fromSeconds: 0, toSeconds: 4, mode: "fill", focusX: 20 }, { fromSeconds: 4, toSeconds: 8, mode: "fill", focusX: 80 }], hookFirst);
+assert.deepEqual(hookShots.map((f) => [f.focusX, +f.fromSeconds.toFixed(2)]), [[80, 0], [20, 1.1], [80, 3.2]]);
+
+// A hook ending mid-sentence runs on to the sentence's end (within 5 s).
+assert.deepEqual(hookToSentence(words, [0.1, 1.2], 8), [0.1, 2.15]);
+assert.deepEqual(hookToSentence([w("no", 0, 1), w("end", 1, 9)], [0, 1], 10), [0, 1]);
+
 console.log("tighten ok");
