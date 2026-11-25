@@ -27,6 +27,34 @@ const SPLIT_FACE_SHARE = 0.3;
 const BACKGROUND = "0x0a0a0f";
 const FADE_IN_SECONDS = 0.15;
 const FADE_OUT_SECONDS = 0.3;
+// "Studio sound" lite: cut rumble below 80 Hz, take the steady hiss/hum out,
+// and gently even out loud and quiet words so loudness can reach its target.
+const DENOISE = "highpass=f=80,afftdn=nr=10:nf=-40,acompressor=threshold=-20dB:ratio=3:attack=5:release=150:makeup=2,alimiter=limit=0.35:level=false";
+// Reels/Shorts loudness: -14 LUFS. Peaks aim at -2.5 dB because AAC encoding
+// pushed a -1.5 target up to -0.4.
+const LOUDNESS = "I=-14:TP=-2.5:LRA=11";
+
+/**
+ * Two-pass loudnorm: one-pass only reached -16.4 LUFS on a 60 s test clip,
+ * so measure the cleaned audio first, then correct it linearly. Falls back
+ * to one-pass if the measurement can't be read. loudnorm works at 192 kHz,
+ * so resample back to 48 kHz.
+ */
+async function audioCleanup(segmentPath: string): Promise<string> {
+  try {
+    const { stderr } = await execFileAsync(
+      getFfmpegPath(),
+      ["-hide_banner", "-nostats", "-i", segmentPath, "-vn", "-af", `${DENOISE},loudnorm=${LOUDNESS}:print_format=json`, "-f", "null", "-"],
+      { maxBuffer: 16 * 1024 * 1024 }
+    );
+    const m = JSON.parse(stderr.slice(stderr.lastIndexOf("{"), stderr.lastIndexOf("}") + 1));
+    const measured = `measured_I=${m.input_i}:measured_TP=${m.input_tp}:measured_LRA=${m.input_lra}:measured_thresh=${m.input_thresh}:offset=${m.target_offset}`;
+    if (![m.input_i, m.input_tp, m.input_lra, m.input_thresh, m.target_offset].every((v) => Number.isFinite(Number(v)))) throw new Error("no measurement");
+    return `${DENOISE},loudnorm=${LOUDNESS}:${measured}:linear=true,aresample=48000`;
+  } catch {
+    return `${DENOISE},loudnorm=${LOUDNESS},aresample=48000`;
+  }
+}
 
 export interface FfmpegRenderInput {
   /** A cut of the source that starts exactly at the clip start. */
@@ -191,7 +219,7 @@ export async function renderClipFfmpeg(input: FfmpegRenderInput): Promise<void> 
   const graph = [
     videoGraph(input.framing, d, width, height).replace("[vout]", "[vf]"),
     `[vf]${captions ? `ass='${filterPath(assPath)}',` : ""}format=yuv420p[vout]`,
-    `[0:a]afade=t=in:d=${FADE_IN_SECONDS},afade=t=out:st=${Math.max(0, d - FADE_OUT_SECONDS).toFixed(3)}:d=${FADE_OUT_SECONDS}[aout]`,
+    `[0:a]${await audioCleanup(input.segmentPath)},afade=t=in:d=${FADE_IN_SECONDS},afade=t=out:st=${Math.max(0, d - FADE_OUT_SECONDS).toFixed(3)}:d=${FADE_OUT_SECONDS}[aout]`,
   ].join(";\n");
   if (captions) await writeFile(assPath, buildAss(input.captionPages, input.captionStyle ?? DEFAULT_CAPTION_STYLE));
   await writeFile(graphPath, graph);
