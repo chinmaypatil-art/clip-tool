@@ -126,7 +126,10 @@ export async function runTranscriptExtraction(
     const wavPath = path.join(dir, "full-audio.wav");
     await extractAudioSegment(sourcePath, wavPath, 0, probe.durationSeconds);
     // Only models read this transcript, and they read Devanagari fine — no romanization needed.
-    const captions = await gpuSlot(() => transcribeWav(wavPath, { romanizer: null }));
+    const captions = await gpuSlot(
+      () => transcribeWav(wavPath, { romanizer: null }),
+      (ahead) => updateAnalysis(analysisId, { queueAhead: ahead || undefined })
+    );
     const segments = captionsToSegments(captions);
     updateAnalysis(analysisId, {
       status: "ready",
@@ -224,7 +227,8 @@ export async function runModelAgainstAnalysis(
         range: clipLengthRange(clipLength),
         sourcePath: path.join(analysisDir(analysisId), "source.mp4"),
         focus: analysis.focus,
-      })
+      }),
+      (ahead) => updateRun(analysisId, run.id, { queueAhead: ahead || undefined })
     );
     const clips = result.clips.map((c): AnalysisClip => ({ ...c, id: randomUUID(), renderStatus: "pending" }));
 
@@ -586,7 +590,8 @@ export async function renderAnalysisClip(analysisId: string, runId: string, clip
       captionStyle,
       framing,
       segmentPath,
-      onStart: () => updateRunClip(analysisId, runId, clipId, { renderStartedAt: Date.now() }),
+      onStart: () => updateRunClip(analysisId, runId, clipId, { renderStartedAt: Date.now(), queueAhead: undefined }),
+      onQueue: (ahead) => ahead && updateRunClip(analysisId, runId, clipId, { queueAhead: ahead }),
     })).finally(() => rm(segmentPath, { force: true }).catch(() => {}));
     console.log(`[timing] clip ${clipId.slice(0, 8)}: ${timer.summary()}`);
 

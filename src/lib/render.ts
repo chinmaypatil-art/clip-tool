@@ -76,6 +76,8 @@ export interface RenderClipInput {
   onProgress?: (progress: number) => void;
   /** Called when this clip leaves the render queue and starts rendering. */
   onStart?: () => void;
+  /** Called with this clip's place in the render queue while it waits. */
+  onQueue?: (ahead: number) => void;
   /** Local path of the pre-cut segment; lets the ffmpeg renderer run. */
   segmentPath?: string;
 }
@@ -101,7 +103,7 @@ export function renderClip(input: RenderClipInput): Promise<void> {
       console.warn(`[render] retrying "${input.outputPath}" after: ${describeError(err)}`);
       await renderClipNow(input);
     }
-  });
+  }, input.onQueue);
 }
 
 async function renderClipNow(input: RenderClipInput): Promise<void> {

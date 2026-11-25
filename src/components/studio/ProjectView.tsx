@@ -149,6 +149,11 @@ export function ProjectView({ id, onBack }: { id: string; onBack: () => void }) 
               transition={{ ease: "easeOut", duration: 0.6 }}
             />
           </div>
+          {(analysis.queueAhead || run?.queueAhead) && (
+            <p className="mt-4 text-xs text-amber-300/90">
+              Waiting for another video to finish ({analysis.queueAhead || run?.queueAhead} ahead of yours). It starts automatically.
+            </p>
+          )}
           <p className="mt-3 text-[11px] tabular-nums text-zinc-600">{clock(elapsed)} so far · usually 8–10 min. You can leave this page; it keeps going.</p>
         </div>
       )}

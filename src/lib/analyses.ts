@@ -32,6 +32,8 @@ export interface AnalysisClip extends NormalizedClip {
   /** Rendering itself began (after the queue). */
   renderStartedAt?: number;
   renderFinishedAt?: number;
+  /** Renders ahead of this one in the shared queue (another video's clips), while it waits. */
+  queueAhead?: number;
   /** The user's edits from the clip editor; applied on every render. */
   edit?: ClipEdit;
   /** Words of the last render (clip-relative ms), for the editor's transcript. */
@@ -39,6 +41,8 @@ export interface AnalysisClip extends NormalizedClip {
 }
 
 export interface ModelRun {
+  /** Jobs ahead in the one-at-a-time GPU queue (picking / Whisper) while this waits. */
+  queueAhead?: number;
   id: string;
   provider: Provider;
   model: string;
@@ -57,6 +61,8 @@ export interface ModelRun {
 }
 
 export interface Analysis {
+  /** Jobs ahead in the one-at-a-time GPU queue (picking / Whisper) while this waits. */
+  queueAhead?: number;
   id: string;
   sourceLabel: string;
   sourceKind: "youtube" | "file";

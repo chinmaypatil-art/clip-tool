@@ -71,7 +71,7 @@ export function ClipTile({
             {busy ? (
               <>
                 <Loader2 size={20} className="animate-spin text-zinc-400" />
-                <span className="text-xs text-zinc-500">{clip.renderStartedAt ? "Rendering…" : "Waiting…"}</span>
+                <span className="text-xs text-zinc-500">{clip.renderStartedAt ? "Rendering…" : clip.queueAhead ? `In line · ${clip.queueAhead} ahead` : "Waiting…"}</span>
               </>
             ) : clip.renderStatus === "error" ? (
               <>
