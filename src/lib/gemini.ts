@@ -480,6 +480,7 @@ Rewrite each word in Latin script the way Indians write Hinglish in Instagram/Yo
 - English words written in Devanagari: normal English spelling ("क्रिएटर्स" -> "creators", "मॉडल्स" -> "models").
 - English words already in Latin script but spelled by sound: correct English ("aaitam" -> "item", "sekund" -> "second", "shotgan" -> "shotgun", "phone" stays "phone").
 - Hindi words spelled oddly: the spelling most people would type ("juruta"/"jarurat" -> "zaroorat", "bhaaee" -> "bhai", "bakhvas" -> "bakwaas", "gya" -> "gaya").
+- "फ" is "f" in Hinglish, never "ph", except in "phir" ("तरफ" / "taraph" -> "taraf", "साफ" -> "saaf", "माफ" -> "maaf", "फ़ोन" -> "phone"); "ज़" is "z" ("ज़िंदगी" -> "zindagi").
 - Words already in Latin script: keep them; only drop stray accents ("bäťe" -> "baithe") and fix clearly broken Hinglish spellings.
 - Keep punctuation attached to its word. Never translate.
 ${
