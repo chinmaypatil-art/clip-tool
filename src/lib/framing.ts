@@ -45,6 +45,14 @@ const MIN_PRESENCE = 0.3; // a person must be seen in >=30% of a shot's samples 
 // Mouth/jaw movement below this is a still object the detector mistook for a
 // face (a plant leaf scored 0.02-0.04; real faces, even listeners, score 10+).
 const MIN_FACE_MOTION = 1;
+// Speaker switching in a two-person shot (see speakerRuns), in 1/SAMPLE_FPS samples:
+const TALK_SMOOTH = 2; // average mouth movement over +-0.5 s
+const TALK_LEAD = 1.4; // the speaker's mouth moves 1.4x more than the other person's
+const SWITCH_AFTER = 3; // a new speaker must lead for 0.75 s before the crop moves to them
+const MIN_HOLD = 10; // and every shot lasts at least 2.5 s, so it never jitters
+// Faces narrower than this (of source width) are ~15 px in the 320 px sample:
+// too small to read lips (a wide shot picked the listener), so both stay on screen.
+const MIN_TALK_FACE = 0.08;
 
 let sessionPromise: Promise<ort.InferenceSession> | null = null;
 
@@ -140,6 +148,8 @@ interface Face {
   y2: number;
   /** Lip/jaw movement versus the previous sample; null right after a cut. */
   motion: number | null;
+  /** Mouth movement beyond the eyes' (head motion removed); what speaker switching uses. */
+  talk: number | null;
 }
 
 async function detectFaces(session: ort.InferenceSession, rgb: Buffer): Promise<Array<[number, number, number, number]>> {
@@ -276,6 +286,67 @@ function decideShot(
   return { mode: "split", focusX: 50, people: pair, sourceAspect };
 }
 
+type Talk = 0 | 1 | "both";
+
+/**
+ * Inside a two-person "split" shot, who is talking sample by sample: mouth
+ * movement beyond head movement (Face.talk), smoothed, and the clear leader
+ * wins. Not scaled to each person's own typical movement: someone who talks
+ * the whole shot would then look as still as the listener. Otherwise both
+ * stay on screen. Then hysteresis and a minimum hold so the crop only moves
+ * on real turns.
+ * shortcut: mouth movement only, so laughing or nodding can win a turn; a
+ * speaker-detection model (Light-ASD) is the upgrade if wrong-face shots show up.
+ */
+export function speakerRuns(motion: Array<[number | null, number | null]>): Array<{ from: number; to: number; who: Talk }> {
+  const smooth = motion.map((_, i) =>
+    [0, 1].map((k) => {
+      const vals = motion.slice(Math.max(0, i - TALK_SMOOTH), i + TALK_SMOOTH + 1).map((m) => m[k]).filter((v): v is number => v !== null);
+      return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : 0;
+    })
+  );
+  const raw: Talk[] = smooth.map(([a, b]) => (a > TALK_LEAD * b ? 0 : b > TALK_LEAD * a ? 1 : "both"));
+
+  // Hysteresis: only switch once the new label has held for SWITCH_AFTER samples.
+  const held: Talk[] = [];
+  let cur = raw[0] ?? "both";
+  raw.forEach((label, i) => {
+    const next = raw.slice(i, i + SWITCH_AFTER);
+    if (label !== cur && next.length === SWITCH_AFTER && next.every((l) => l === label)) cur = label;
+    held.push(cur);
+  });
+
+  const runs: Array<{ from: number; to: number; who: Talk }> = [];
+  held.forEach((who, i) => {
+    const last = runs.at(-1);
+    if (last && last.who === who) last.to = i + 1;
+    else runs.push({ from: i, to: i + 1, who });
+  });
+  // Too-short runs join the run before them (or after, for the first).
+  for (let i = 0; i < runs.length; ) {
+    if (runs.length > 1 && runs[i].to - runs[i].from < MIN_HOLD) {
+      const into = i > 0 ? runs[i - 1] : runs[i + 1];
+      into.from = Math.min(into.from, runs[i].from);
+      into.to = Math.max(into.to, runs[i].to);
+      runs.splice(i, 1);
+      // Neighbours that now share a speaker become one run.
+      for (let j = 1; j < runs.length; j++) if (runs[j].who === runs[j - 1].who) { runs[j - 1].to = runs[j].to; runs.splice(j--, 1); }
+      i = 0;
+    } else i++;
+  }
+  return runs;
+}
+
+/** Each sample's mouth movement for the two people of a split shot (null when that face wasn't found). */
+function pairMotion(samples: Face[][], pair: Array<{ cx: number; w: number }>): Array<[number | null, number | null]> {
+  return samples.map((faces) =>
+    pair.map((p) => {
+      const f = faces.find((x) => Math.abs((x.x1 + x.x2) / 2 - p.cx) < Math.max(0.06, p.w * 0.8));
+      return f?.talk ?? null;
+    }) as [number | null, number | null]
+  );
+}
+
 /**
  * Works out the vertical framing for [startSeconds, startSeconds+durationSeconds)
  * of a video, as shot segments with times relative to the clip start.
@@ -327,12 +398,19 @@ export async function analyzeFraming(
         x2: (px2 - ox) / cw,
         y2: (py2 - oy) / ch,
         motion: null as number | null,
+        talk: null as number | null,
       };
       if (face.x2 - face.x1 < MIN_FACE_WIDTH) continue;
       if (sameShotAsPrev) {
         // Lower half of the face: mouth and jaw.
         const w = px2 - px1;
-        face.motion = regionChange(frames[i], frames[i - 1], px1 + w * 0.2, py1 + (py2 - py1) * 0.55, px2 - w * 0.2, py2);
+        const h = py2 - py1;
+        const mouth = regionChange(frames[i], frames[i - 1], px1 + w * 0.2, py1 + h * 0.55, px2 - w * 0.2, py2);
+        // Moving the head or a hand near it changes the eyes too; talking mostly
+        // moves the mouth. Movement beyond the eyes' is what counts as talking.
+        const eyes = regionChange(frames[i], frames[i - 1], px1 + w * 0.2, py1 + h * 0.2, px2 - w * 0.2, py1 + h * 0.45);
+        face.motion = mouth;
+        face.talk = Math.max(0, mouth - eyes);
       }
       faces.push(face);
     }
@@ -343,6 +421,22 @@ export async function analyzeFraming(
   shotStarts.forEach((from, s) => {
     const to = s + 1 < shotStarts.length ? shotStarts[s + 1] : duration;
     const decision = decideShot(perShot[s], crop, probe.width / probe.height);
+    // A two-shot follows whoever is talking: full-screen on them, both while unclear.
+    if (decision.mode === "split" && decision.people?.length === 2 && decision.people.every((p) => p.w >= MIN_TALK_FACE)) {
+      const runs = speakerRuns(pairMotion(perShot[s], decision.people));
+      if (process.env.FRAMING_DEBUG) console.log("[framing] speaker runs", runs.map((r) => `${(from + r.from / SAMPLE_FPS).toFixed(1)}s ${r.who}`).join(", "));
+      if (runs.some((r) => r.who !== "both")) {
+        for (const r of runs) {
+          const piece = r.who === "both" ? decision : { mode: "fill" as const, focusX: focusPercent(decision.people[r.who].cx, crop) };
+          segments.push({
+            fromSeconds: r.from === 0 ? from : from + r.from / SAMPLE_FPS,
+            toSeconds: r.to >= perShot[s].length ? to : from + r.to / SAMPLE_FPS,
+            ...piece,
+          });
+        }
+        return;
+      }
+    }
     const prev = segments[segments.length - 1];
     const samePeople =
       decision.mode !== "split" ||
