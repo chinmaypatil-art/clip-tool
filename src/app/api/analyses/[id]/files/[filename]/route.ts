@@ -34,14 +34,29 @@ export async function GET(
   const stats = await stat(filePath).catch(() => null);
   if (!stats) return NextResponse.json({ error: "File missing on disk." }, { status: 404 });
 
+  const headers = {
+    "Content-Type": isThumbnail ? "image/jpeg" : "video/mp4",
+    "Content-Disposition": dispositionFor(req, filename),
+    "Accept-Ranges": "bytes",
+  };
+  // Players seek by asking for a byte range; without 206 replies the
+  // timeline can't be dragged and the video just keeps playing.
+  const range = /^bytes=(\d*)-(\d*)$/.exec(req.headers.get("range") ?? "");
+  if (range && (range[1] || range[2])) {
+    const size = stats.size;
+    const start = range[1] ? Number(range[1]) : Math.max(0, size - Number(range[2]));
+    const end = range[1] && range[2] ? Math.min(Number(range[2]), size - 1) : size - 1;
+    if (start >= size || start > end) {
+      return new NextResponse(null, { status: 416, headers: { "Content-Range": `bytes */${size}` } });
+    }
+    const stream = Readable.toWeb(createReadStream(filePath, { start, end })) as ReadableStream;
+    return new NextResponse(stream, {
+      status: 206,
+      headers: { ...headers, "Content-Length": String(end - start + 1), "Content-Range": `bytes ${start}-${end}/${size}` },
+    });
+  }
   const stream = Readable.toWeb(createReadStream(filePath)) as ReadableStream;
-  return new NextResponse(stream, {
-    headers: {
-      "Content-Type": isThumbnail ? "image/jpeg" : "video/mp4",
-      "Content-Length": String(stats.size),
-      "Content-Disposition": dispositionFor(req, filename),
-    },
-  });
+  return new NextResponse(stream, { headers: { ...headers, "Content-Length": String(stats.size) } });
 }
 
 /** ?download=<name> saves the file as "<name>.mp4" instead of playing it. */

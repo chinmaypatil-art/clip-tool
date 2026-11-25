@@ -55,9 +55,10 @@ export function mapTime(ranges: KeepRange[], t: number): number {
   return out;
 }
 
-/** Captions on the tightened timeline; words that were cut out are dropped. */
+/** Captions on the tightened timeline; words that were cut out, and fillers ("uh"), are dropped. */
 export function remapCaptions(words: Caption[], ranges: KeepRange[]): Caption[] {
   return words
+    .filter((w) => !isFiller(w.text))
     .filter((w) => {
       const mid = (w.startMs + w.endMs) / 2000;
       return ranges.some(([s, e]) => mid >= s && mid <= e);

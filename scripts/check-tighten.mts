@@ -14,6 +14,8 @@ assert.equal(+mapTime(keep, 4).toFixed(2), 2.1); // inside a cut: start of next 
 const caps = remapCaptions(words, keep);
 assert.deepEqual(caps.map((c) => c.text), ["Hello", "there.", "So", "yes."]);
 assert.equal(caps[2].startMs, 2200);
+// A quick "uh" stays in the cut (no jumpy edit) but never shows in captions.
+assert.deepEqual(remapCaptions([w("I", 0, 0.3), w("uh", 0.35, 0.5), w("think", 0.55, 1)], [[0, 1.5]]).map((c) => c.text), ["I", "think"]);
 
 // A quick "uh" mid-sentence stays (no jumpy cut), and small savings don't re-cut.
 assert.deepEqual(keepRanges([w("I", 0, 0.3), w("uh", 0.35, 0.5), w("think", 0.55, 1)], 1.5), [[0, 1.5]]);

@@ -23,7 +23,7 @@ const execFileAsync = ((file: string, args: readonly string[], opts: object = {}
  */
 
 const HALF_HEIGHT = HEIGHT / 2;
-const SPLIT_FACE_SHARE = 0.3;
+const SPLIT_FACE_SHARE = 0.22;
 const BACKGROUND = "0x0a0a0f";
 const FADE_IN_SECONDS = 0.15;
 const FADE_OUT_SECONDS = 0.3;
@@ -178,7 +178,10 @@ function assStyle(style: CaptionStyle): string {
  * chosen font and colour, the spoken word in the highlight colour and slightly
  * larger. One event per state of the page so the highlight follows the audio.
  */
-export function buildAss(pages: TikTokPage[], style: CaptionStyle = DEFAULT_CAPTION_STYLE): string {
+export function buildAss(pages: TikTokPage[], style: CaptionStyle = DEFAULT_CAPTION_STYLE, framing: FramingSegment[] = []): string {
+  // In a split shot the bottom (or top) caption sits on a face; put it on the
+  // line between the two people instead.
+  const inSplit = (ms: number) => framing.some((f) => f.mode === "split" && ms / 1000 >= f.fromSeconds && ms / 1000 < f.toSeconds);
   const base = assColor(style.color);
   const mark = style.highlight ? assColor(style.highlight) : null;
   const events: string[] = [];
@@ -199,7 +202,8 @@ export function buildAss(pages: TikTokPage[], style: CaptionStyle = DEFAULT_CAPT
       const text = words
         .map((w, k) => (mark && k === active ? `{\\c${mark}&\\fscx108\\fscy108}${w}{\\c${base}&\\fscx100\\fscy100}` : w))
         .join(" ");
-      events.push(`Dialogue: 0,${assTime(from)},${assTime(to)},Caption,,0,0,0,,${text}`);
+      const place = inSplit(from) ? `{\\an5\\pos(${WIDTH / 2},${HALF_HEIGHT})}` : "";
+      events.push(`Dialogue: 0,${assTime(from)},${assTime(to)},Caption,,0,0,0,,${place}${text}`);
     }
   }
   return [
@@ -235,7 +239,7 @@ export async function renderClipFfmpeg(input: FfmpegRenderInput): Promise<void> 
     `[vf]${captions ? `ass='${filterPath(assPath)}',` : ""}format=yuv420p[vout]`,
     `[0:a]${await audioCleanup(input.segmentPath)},afade=t=in:d=${FADE_IN_SECONDS},afade=t=out:st=${Math.max(0, d - FADE_OUT_SECONDS).toFixed(3)}:d=${FADE_OUT_SECONDS}[aout]`,
   ].join(";\n");
-  if (captions) await writeFile(assPath, buildAss(input.captionPages, input.captionStyle ?? DEFAULT_CAPTION_STYLE));
+  if (captions) await writeFile(assPath, buildAss(input.captionPages, input.captionStyle ?? DEFAULT_CAPTION_STYLE, input.framing));
   await writeFile(graphPath, graph);
   const encoder = (await nvencAvailable())
     ? ["-c:v", "h264_nvenc", "-preset", "p5", "-tune", "hq", "-rc", "vbr", "-cq", "21", "-b:v", "0"]

@@ -17,7 +17,7 @@ import { WIDTH, HEIGHT } from "../types";
 const HALF_HEIGHT = HEIGHT / 2;
 // Size of a face in its half, as a fraction of the canvas width — close
 // enough to read expressions, with room for shoulders and hands.
-const SPLIT_FACE_SHARE = 0.3;
+const SPLIT_FACE_SHARE = 0.22;
 
 /**
  * One half of a "split" shot: the full source frame, scaled and shifted so

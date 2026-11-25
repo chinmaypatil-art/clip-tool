@@ -63,7 +63,7 @@ export function ClipTile({
     >
       <div className="relative aspect-[9/16] overflow-hidden rounded-2xl bg-white/[0.03] ring-1 ring-white/10">
         {clip.renderStatus === "done" && fileUrl ? (
-          <video src={fileUrl} poster={thumbUrl} controls preload="none" className="h-full w-full object-cover" />
+          <video src={fileUrl} poster={thumbUrl} controls preload="none" className="h-full w-full object-contain" />
         ) : (
           <div className="flex h-full flex-col items-center justify-center gap-3 p-4 text-center">
             {busy ? (
