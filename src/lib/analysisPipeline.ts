@@ -4,6 +4,7 @@ import { createTikTokStyleCaptions, type Caption } from "@remotion/captions";
 import { keepRanges, keptLength, remapCaptions, remapFraming } from "./tighten";
 import { randomUUID } from "crypto";
 import { createLimiter } from "./limit";
+import { StageTimer } from "./timing";
 import { processSingleton } from "./processState";
 import { ensureOllama } from "./ollamaHealth";
 import { parseCaptionStyle, WORDS_COMBINE_MS } from "./captionStyle";
@@ -155,7 +156,10 @@ export async function makeClips(
   const run = getAnalysis(analysisId)?.runs.at(-1);
   if (run?.status !== "done") return;
 
-  const inFlight = createLimiter(2);
+  // One at a time: two in parallel fought over the CPU (framing 4.5 s -> 32 s,
+  // whisper 6 s -> 33 s) and took longer than back to back, and the first
+  // clip arrives in about a minute instead of after several.
+  const inFlight = createLimiter(1);
   await Promise.all(run.clips.map((clip) => inFlight(() => renderAnalysisClip(analysisId, run.id, clip.id))));
 }
 
@@ -442,8 +446,9 @@ export async function renderAnalysisClip(analysisId: string, runId: string, clip
     const outPath = path.join(dir, filename);
     const wavPath = path.join(dir, `render-${runId}-${clip.id}-audio.wav`);
 
+    const timer = new StageTimer(`${analysisId.slice(0, 8)}/${clipId.slice(0, 8)}`);
     // Face-aware crop, computed alongside captions; letterbox if it fails.
-    const framingPromise = analyzeFraming(sourcePath, startSeconds, clipLength).catch((err) => {
+    const framingPromise = timer.time("framing", () => analyzeFraming(sourcePath, startSeconds, clipLength)).catch((err) => {
       console.error(`[analysisPipeline] framing analysis failed for ${analysisId}/${runId}/${clipId}:`, err);
       return [];
     });
@@ -454,10 +459,13 @@ export async function renderAnalysisClip(analysisId: string, runId: string, clip
     try {
       if (captionStyle) {
         await extractAudioSegment(sourcePath, wavPath, startSeconds, clipLength);
-        captions = await transcribeWav(wavPath, {
-          romanizer: await getLocalRomanizer(run.provider, run.model),
-          reference: referenceText(analysis.transcript?.segments, startSeconds, startSeconds + clipLength),
-        });
+        const romanizer = await getLocalRomanizer(run.provider, run.model);
+        captions = await timer.time("captions", () =>
+          transcribeWav(wavPath, {
+            romanizer,
+            reference: referenceText(analysis.transcript?.segments, startSeconds, startSeconds + clipLength),
+          })
+        );
       }
     } catch (err) {
       console.error(`[analysisPipeline] caption generation failed for ${analysisId}/${runId}/${clipId}:`, err);
@@ -484,7 +492,7 @@ export async function renderAnalysisClip(analysisId: string, runId: string, clip
     // clip rendered without captions keeps its pauses.
     const keep = keepRanges(captions, clipLength);
     const outLength = keptLength(keep);
-    await cutClip(sourcePath, segmentPath, startSeconds, endSeconds, keep);
+    await timer.time("cut", () => cutClip(sourcePath, segmentPath, startSeconds, endSeconds, keep));
     const captionPages = captionStyle
       ? createTikTokStyleCaptions({
           captions: remapCaptions(captions, keep),
@@ -492,7 +500,8 @@ export async function renderAnalysisClip(analysisId: string, runId: string, clip
         }).pages
       : [];
 
-    await renderClip({
+    const framing = remapFraming(await framingPromise, keep);
+    await timer.time("render", () => renderClip({
       serveUrl,
       outputPath: outPath,
       videoFileName: `${APP_ORIGIN}/api/analyses/${analysisId}/files/${segment}`,
@@ -501,10 +510,11 @@ export async function renderAnalysisClip(analysisId: string, runId: string, clip
       title: clip.title,
       captionPages,
       captionStyle,
-      framing: remapFraming(await framingPromise, keep),
+      framing,
       segmentPath,
       onStart: () => updateRunClip(analysisId, runId, clipId, { renderStartedAt: Date.now() }),
-    }).finally(() => rm(segmentPath, { force: true }).catch(() => {}));
+    })).finally(() => rm(segmentPath, { force: true }).catch(() => {}));
+    console.log(`[timing] clip ${clipId.slice(0, 8)}: ${timer.summary()}`);
 
     await captureThumbnail(outPath, path.join(dir, thumbFilename), outLength);
 
