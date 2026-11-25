@@ -1,5 +1,6 @@
 import path from "path";
-import { copyFile, rm, writeFile } from "fs/promises";
+import { copyFile, link, rm, writeFile } from "fs/promises";
+import { existsSync } from "fs";
 import { createTikTokStyleCaptions, type Caption } from "@remotion/captions";
 import { hookToSentence, keepRanges, keptLength, remapCaptions, remapFraming, type KeepRange } from "./tighten";
 import { applyLayout, subtractRanges } from "./clipEdit";
@@ -24,6 +25,7 @@ import {
   updateRun,
   updateRunClip,
   getAnalysis,
+  listAnalyses,
   type ModelRun,
   type AnalysisClip,
 } from "./analyses";
@@ -54,7 +56,6 @@ const shortestClip = (range: ClipLengthRange) => Math.min(range.minSeconds, HARD
  * Whisper transcription for everything else. Every model run against this
  * analysis uses this exact same transcript — required for a fair comparison.
  */
-const MAX_VIDEO_SECONDS = 3 * 3600;
 
 /**
  * Whole-video Whisper and Gemma's picking each fill most of the GPU; when two
@@ -62,6 +63,12 @@ const MAX_VIDEO_SECONDS = 3 * 3600;
  * memory. (Per-clip work during rendering is short and isn't gated.)
  */
 const gpuSlot = processSingleton("gpuSlot", () => createLimiter(1));
+
+/** Same video despite share-link noise: YouTube by its 11-character id (watch, live, shorts, youtu.be), else the exact URL. */
+export function sameVideo(a: string | undefined, b: string): boolean {
+  const id = (u: string) => u.match(/(?:v=|youtu\.be\/|\/live\/|\/shorts\/|\/embed\/)([\w-]{11})/)?.[1] ?? u;
+  return !!a && id(a) === id(b);
+}
 
 export async function runTranscriptExtraction(
   analysisId: string,
@@ -74,7 +81,17 @@ export async function runTranscriptExtraction(
     if (source.kind === "url") {
       if (!isUrl(source.url)) throw new AnalysisPipelineError("Not a valid http(s) URL.");
       updateAnalysis(analysisId, { status: "extracting_transcript" });
-      await downloadVideo(source.url, sourcePath, () => {});
+      // A link already downloaded (e.g. a retry of a 7 GB stream) is reused, not fetched again.
+      const earlier = (await listAnalyses()).find(
+        (a) => a.id !== analysisId && sameVideo(a.sourceUrl, source.url) && a.downloadedAt && !a.sourceDeleted && existsSync(path.join(analysisDir(a.id), "source.mp4"))
+      );
+      if (earlier) {
+        const from = path.join(analysisDir(earlier.id), "source.mp4");
+        // A hard link shares the bytes without using more disk; copy if linking isn't possible.
+        await link(from, sourcePath).catch(() => copyFile(from, sourcePath));
+      } else {
+        await downloadVideo(source.url, sourcePath, () => {});
+      }
     } else {
       await copyFile(source.path, sourcePath);
     }
@@ -83,9 +100,6 @@ export async function runTranscriptExtraction(
     const probe = await probeVideo(sourcePath);
     if (probe.durationSeconds < 30) {
       throw new AnalysisPipelineError("Video is too short to extract meaningful clips (minimum 30 seconds).");
-    }
-    if (probe.durationSeconds > MAX_VIDEO_SECONDS) {
-      throw new AnalysisPipelineError("This video is over 3 hours long. Please use a shorter video or cut it into parts.");
     }
     updateAnalysis(analysisId, { videoDurationSeconds: probe.durationSeconds });
 
