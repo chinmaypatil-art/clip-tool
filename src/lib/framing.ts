@@ -53,6 +53,10 @@ const MIN_HOLD = 10; // and every shot lasts at least 2.5 s, so it never jitters
 // Faces narrower than this (of source width) are ~15 px in the 320 px sample:
 // too small to read lips (a wide shot picked the listener), so both stay on screen.
 const MIN_TALK_FACE = 0.08;
+// Movement (mean luma change) beside a fill crop that means hands are gesturing out of frame.
+const GESTURE_MOTION = 4;
+const GESTURE_BEFORE = 2; // samples
+const GESTURE_AFTER = 8;
 
 let sessionPromise: Promise<ort.InferenceSession> | null = null;
 
@@ -299,24 +303,28 @@ type Talk = 0 | 1 | "both";
  * speaker-detection model (Light-ASD) is the upgrade if wrong-face shots show up.
  */
 export function speakerRuns(motion: Array<[number | null, number | null]>): Array<{ from: number; to: number; who: Talk }> {
+  if (!motion.length) return [];
   const smooth = motion.map((_, i) =>
     [0, 1].map((k) => {
       const vals = motion.slice(Math.max(0, i - TALK_SMOOTH), i + TALK_SMOOTH + 1).map((m) => m[k]).filter((v): v is number => v !== null);
       return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : 0;
     })
   );
-  const raw: Talk[] = smooth.map(([a, b]) => (a > TALK_LEAD * b ? 0 : b > TALK_LEAD * a ? 1 : "both"));
+  return holdRuns<Talk>(smooth.map(([a, b]) => (a > TALK_LEAD * b ? 0 : b > TALK_LEAD * a ? 1 : "both")));
+}
 
+/** Per-sample labels -> runs that only switch on a label held SWITCH_AFTER samples and last MIN_HOLD. */
+function holdRuns<T>(raw: T[]): Array<{ from: number; to: number; who: T }> {
   // Hysteresis: only switch once the new label has held for SWITCH_AFTER samples.
-  const held: Talk[] = [];
-  let cur = raw[0] ?? "both";
+  const held: T[] = [];
+  let cur = raw[0];
   raw.forEach((label, i) => {
     const next = raw.slice(i, i + SWITCH_AFTER);
     if (label !== cur && next.length === SWITCH_AFTER && next.every((l) => l === label)) cur = label;
     held.push(cur);
   });
 
-  const runs: Array<{ from: number; to: number; who: Talk }> = [];
+  const runs: Array<{ from: number; to: number; who: T }> = [];
   held.forEach((who, i) => {
     const last = runs.at(-1);
     if (last && last.who === who) last.to = i + 1;
@@ -335,6 +343,32 @@ export function speakerRuns(motion: Array<[number | null, number | null]>): Arra
     } else i++;
   }
   return runs;
+}
+
+/**
+ * Per sample, whether hands/body move just outside a fill crop (strips beside
+ * it, from the chin down): the speaker is gesturing out of frame.
+ */
+function gestureSamples(frames: Buffer[], idx: number[], focusX: number, crop: number, faceBottom: number, px: (x: number) => number, py: (y: number) => number): boolean[] {
+  const left = (focusX / 100) * (1 - crop);
+  const band = crop * 0.35;
+  const y1 = py(Math.min(faceBottom, 0.9));
+  const y2 = py(1);
+  const motion = idx.map((i, k) => {
+    if (k === 0 || idx[k - 1] !== i - 1) return 0;
+    const l = left > 0.01 ? regionChange(frames[i], frames[i - 1], px(left - band), y1, px(left), y2) : 0;
+    const r = left + crop < 0.99 ? regionChange(frames[i], frames[i - 1], px(left + crop), y1, px(left + crop + band), y2) : 0;
+    return Math.max(l, r);
+  });
+  const smooth = motion.map((_, i) => {
+    const w = motion.slice(Math.max(0, i - TALK_SMOOTH), i + TALK_SMOOTH + 1);
+    return w.reduce((a, b) => a + b, 0) / w.length;
+  });
+  if (process.env.FRAMING_DEBUG) console.log("[framing] gesture motion", smooth.map((m) => m.toFixed(1)).join(" "));
+  // Analysis is offline, so widen from 0.5 s before the hands move until 2 s
+  // after: the view is already wide when they arrive and doesn't snap back.
+  const hit = smooth.map((m) => m >= GESTURE_MOTION);
+  return hit.map((_, i) => hit.slice(Math.max(0, i - GESTURE_AFTER), i + GESTURE_BEFORE + 1).some(Boolean));
 }
 
 /** Each sample's mouth movement for the two people of a split shot (null when that face wasn't found). */
@@ -381,6 +415,7 @@ export async function analyzeFraming(
   };
 
   const perShot: Face[][][] = shotStarts.map(() => []);
+  const shotSamples: number[][] = shotStarts.map(() => []);
   for (let i = 0; i < frames.length; i++) {
     const t = i / SAMPLE_FPS;
     const shot = shotOf(t);
@@ -415,12 +450,33 @@ export async function analyzeFraming(
       faces.push(face);
     }
     perShot[shot].push(faces);
+    shotSamples[shot].push(i);
   }
 
   const segments: FramingSegment[] = [];
   shotStarts.forEach((from, s) => {
     const to = s + 1 < shotStarts.length ? shotStarts[s + 1] : duration;
     const decision = decideShot(perShot[s], crop, probe.width / probe.height);
+    // A close-up whose speaker gestures out of frame zooms out to a square
+    // view (blurred fill above and below) while the hands are moving.
+    if (decision.mode === "fill" && crop < 1) {
+      const faces = perShot[s].flat();
+      const faceBottom = faces.length ? median(faces.map((f) => f.y2)) : 0.6;
+      const runs = holdRuns(gestureSamples(frames, shotSamples[s], decision.focusX, crop, faceBottom, (x) => ox + x * cw, (y) => oy + y * ch));
+      if (runs.some((r) => r.who)) {
+        const square = Math.min(1, probe.height / probe.width);
+        const center = (decision.focusX / 100) * (1 - crop) + crop / 2;
+        for (const r of runs) {
+          const piece = r.who ? { mode: "wide" as const, focusX: focusPercent(center, square) } : decision;
+          const prev = segments[segments.length - 1];
+          const fromS = r.from === 0 ? from : from + r.from / SAMPLE_FPS;
+          const toS = r.to >= perShot[s].length ? to : from + r.to / SAMPLE_FPS;
+          if (prev && prev.mode === piece.mode && Math.abs(prev.focusX - piece.focusX) < 3) prev.toSeconds = toS;
+          else segments.push({ fromSeconds: fromS, toSeconds: toS, ...piece });
+        }
+        return;
+      }
+    }
     // A two-shot follows whoever is talking: full-screen on them, both while unclear.
     if (decision.mode === "split" && decision.people?.length === 2 && decision.people.every((p) => p.w >= MIN_TALK_FACE)) {
       const runs = speakerRuns(pairMotion(perShot[s], decision.people));

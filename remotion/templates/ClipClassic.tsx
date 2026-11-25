@@ -73,6 +73,7 @@ export const ClipClassic: React.FC<ClipTemplateProps> = ({
   // frame, so a shot where people can't all fit never crops anyone out.
   const t = frame / fps;
   const shot = framing.find((s) => t >= s.fromSeconds && t < s.toSeconds) ?? framing[framing.length - 1];
+  // shortcut: "wide" letterboxes here (no blurred fill); this is only the fallback renderer.
   const fill = shot?.mode === "fill";
   const split = shot?.mode === "split" && shot.people?.length === 2 && shot.sourceAspect ? shot : null;
   // An http(s) URL is used as-is (Compare renders a pre-cut segment served by the app).

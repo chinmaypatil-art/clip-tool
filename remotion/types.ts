@@ -25,13 +25,14 @@ const splitPersonSchema = z.object({
  * How one shot of the clip is framed in the vertical canvas (see
  * src/lib/framing.ts): "fill" crops the source to fill the canvas, centred via
  * focusX (CSS object-position x, 0-100); "split" stacks two people (top and
- * bottom halves) when they're too far apart for one crop; "fit" shows the
- * whole frame letterboxed.
+ * bottom halves) when they're too far apart for one crop; "wide" is a square
+ * crop centred via focusX over a blurred copy, for gestures a fill would cut
+ * off; "fit" shows the whole frame letterboxed.
  */
 const framingSegmentSchema = z.object({
   fromSeconds: z.number(),
   toSeconds: z.number(),
-  mode: z.enum(["fill", "fit", "split"]),
+  mode: z.enum(["fill", "fit", "split", "wide"]),
   focusX: z.number(),
   /** Only for "split": [top, bottom] people. */
   people: z.array(splitPersonSchema).optional(),

@@ -106,6 +106,20 @@ function shotChain(shot: FramingSegment | undefined, srcW: number, srcH: number,
       `[${input}s0][${input}s1]vstack,drawbox=x=0:y=${HALF_HEIGHT - 3}:w=${WIDTH}:h=6:color=${BACKGROUND}:t=fill[${out}]`,
     ].join(";");
   }
+  if (shot?.mode === "wide") {
+    // A square crop (the person plus their gestures) centred via focusX, over
+    // a blurred, darkened fill of the same shot.
+    const side = Math.min(srcW, srcH);
+    const x = Math.round(((srcW - side) * shot.focusX) / 100);
+    const cover = Math.max(WIDTH / srcW, HEIGHT / srcH);
+    const bw = even(srcW * cover), bh = even(srcH * cover);
+    return [
+      `[${input}]split[${input}b][${input}f]`,
+      `[${input}b]scale=${bw}:${bh},crop=${WIDTH}:${HEIGHT},boxblur=24:2,eq=brightness=-0.12[${input}bg]`,
+      `[${input}f]crop=${side}:${side}:${x}:${Math.round((srcH - side) / 2)},scale=${WIDTH}:${WIDTH}[${input}sq]`,
+      `[${input}bg][${input}sq]overlay=0:${(HEIGHT - WIDTH) / 2}[${out}]`,
+    ].join(";");
+  }
   if (shot?.mode === "fill") {
     // CSS object-fit: cover + object-position: focusX% 50%.
     const scale = Math.max(WIDTH / srcW, HEIGHT / srcH);
