@@ -1,7 +1,8 @@
 import path from "path";
-import { copyFile, rm } from "fs/promises";
+import { copyFile, rm, writeFile } from "fs/promises";
 import { createTikTokStyleCaptions, type Caption } from "@remotion/captions";
-import { hookToSentence, keepRanges, keptLength, remapCaptions, remapFraming } from "./tighten";
+import { hookToSentence, keepRanges, keptLength, remapCaptions, remapFraming, type KeepRange } from "./tighten";
+import { applyLayout, subtractRanges } from "./clipEdit";
 import { randomUUID } from "crypto";
 import { createLimiter } from "./limit";
 import { StageTimer } from "./timing";
@@ -492,7 +493,9 @@ export async function renderAnalysisClip(analysisId: string, runId: string, clip
     });
 
     // Older analyses have no setting and keep the default captions.
-    const captionStyle = analysis.captionStyle === null ? null : parseCaptionStyle(analysis.captionStyle);
+    const userEdit = clip.edit ?? {};
+    const captionStyle =
+      userEdit.captionStyle !== undefined ? userEdit.captionStyle : analysis.captionStyle === null ? null : parseCaptionStyle(analysis.captionStyle);
     let captions: Caption[] = [];
     try {
       if (captionStyle) {
@@ -528,11 +531,19 @@ export async function renderAnalysisClip(analysisId: string, runId: string, clip
     const segmentPath = path.join(dir, segment);
     // Fillers and long pauses come out using the caption words' timings, so a
     // clip rendered without captions keeps its pauses.
-    const tight = keepRanges(captions, clipLength);
+    for (const fix of userEdit.wordFixes ?? []) {
+      const word = captions.find((w) => Math.abs(startSeconds * 1000 + w.startMs - fix.ms) < 50);
+      if (word) word.text = (word.text.startsWith(" ") ? " " : "") + fix.text.trim();
+    }
+    const toClip = (r: KeepRange): KeepRange => [r[0] - startSeconds, r[1] - startSeconds];
+    const tight = subtractRanges(
+      userEdit.trimPauses === false ? [[0, clipLength]] : keepRanges(captions, clipLength),
+      (userEdit.removed ?? []).map(toClip)
+    );
     // Hook-first: the chosen line plays once, then the clip from its start.
     // Skipped if a reviewer has since moved the edges past it.
     const hook =
-      clip.hookStartSeconds !== undefined && clip.hookEndSeconds !== undefined &&
+      userEdit.hook !== false && clip.hookStartSeconds !== undefined && clip.hookEndSeconds !== undefined &&
       clip.hookStartSeconds >= startSeconds && clip.hookEndSeconds <= endSeconds
         ? hookToSentence(captions, [Math.max(0, clip.hookStartSeconds - startSeconds - 0.05), clip.hookEndSeconds - startSeconds + 0.15], clipLength)
         : null;
@@ -546,7 +557,10 @@ export async function renderAnalysisClip(analysisId: string, runId: string, clip
         }).pages
       : [];
 
-    const framing = remapFraming(await framingPromise, keep);
+    const layout = (userEdit.layout ?? []).map((l) => ({ ...l, fromSeconds: l.fromSeconds - startSeconds, toSeconds: l.toSeconds - startSeconds }));
+    const framing = remapFraming(applyLayout(await framingPromise, layout, clipLength), keep);
+    const wordsFilename = `render-${runId}-${clip.id}-words.json`;
+    await writeFile(path.join(dir, wordsFilename), JSON.stringify(captions));
     await timer.time("render", () => renderClip({
       serveUrl,
       outputPath: outPath,
@@ -571,6 +585,7 @@ export async function renderAnalysisClip(analysisId: string, runId: string, clip
       renderedEndSeconds: endSeconds,
       renderFilename: filename,
       renderThumbnailFilename: thumbFilename,
+      wordsFilename,
     });
   } catch (err) {
     const message = err instanceof RenderError || err instanceof MediaError ? err.message : err instanceof Error ? err.message : String(err);

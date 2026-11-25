@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { loadAnalysis, updateRunClip, type AnalysisClip } from "@/lib/analyses";
 import { isGoodReason, isRejectReason, type ClipReview } from "@/lib/review";
 import { exportTrainingData, logReview } from "@/lib/training";
+import { parseClipEdit } from "@/lib/clipEdit";
 
 /**
  * Saves a reviewer's verdict and/or corrected edges for one clip, then
@@ -36,6 +37,9 @@ export async function PATCH(
     patch.modelStartSeconds = clip.modelStartSeconds ?? clip.startSeconds;
     patch.modelEndSeconds = clip.modelEndSeconds ?? clip.endSeconds;
   }
+
+  // Editor changes (null = reset to the AI version); the client re-renders after.
+  if ("edit" in body) patch.edit = body.edit === null ? undefined : parseClipEdit(body.edit);
 
   if ("review" in body) {
     const r = body.review;

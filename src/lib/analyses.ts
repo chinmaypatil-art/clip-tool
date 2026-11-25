@@ -1,4 +1,5 @@
 import { randomUUID } from "crypto";
+import type { ClipEdit } from "./clipEdit";
 import { processSingleton } from "./processState";
 import path from "path";
 import { mkdir, readFile, writeFile, readdir, rename } from "fs/promises";
@@ -31,6 +32,10 @@ export interface AnalysisClip extends NormalizedClip {
   /** Rendering itself began (after the queue). */
   renderStartedAt?: number;
   renderFinishedAt?: number;
+  /** The user's edits from the clip editor; applied on every render. */
+  edit?: ClipEdit;
+  /** Words of the last render (clip-relative ms), for the editor's transcript. */
+  wordsFilename?: string;
 }
 
 export interface ModelRun {
