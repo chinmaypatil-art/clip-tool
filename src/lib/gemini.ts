@@ -445,11 +445,7 @@ const ROMANIZE_SCHEMA = {
   properties: {
     words: {
       type: Type.ARRAY,
-      items: {
-        type: Type.OBJECT,
-        properties: { i: { type: Type.INTEGER }, text: { type: Type.STRING } },
-        required: ["i", "text"],
-      },
+      items: { type: Type.STRING },
     },
   },
   required: ["words"],
@@ -492,7 +488,7 @@ ${
           : ""
       }
 
-Return JSON {"words": [{"i": <number>, "text": <word>}, ...]} with one object for every number below.
+Return JSON {"words": ["0:<word>", "1:<word>", ...]}: one "<number>:<rewritten word>" string for every number below.
 
 ${batch.map((w, k) => `${k}: ${w}`).join("\n")}`;
 
@@ -500,11 +496,12 @@ ${batch.map((w, k) => `${k}: ${w}`).join("\n")}`;
         const parsed: unknown = JSON.parse(await ask(prompt));
         const items = Array.isArray(parsed) ? parsed : (parsed as { words?: unknown })?.words;
         if (!Array.isArray(items)) throw new Error("response has no words array");
+        // "12:hai" strings instead of {i, text} objects: about a third of the
+        // output, so a 4-hour stream's clips caption in seconds, not minutes.
         for (const item of items) {
-          const { i, text } = (item ?? {}) as { i?: unknown; text?: unknown };
-          if (typeof i === "number" && Number.isInteger(i) && i >= 0 && i < batch.length && typeof text === "string") {
-            result[start + i] = text.trim() || null;
-          }
+          const m = typeof item === "string" ? /^\s*(\d+)\s*:([^]*)$/.exec(item) : null;
+          const i = m ? Number(m[1]) : -1;
+          if (m && i < batch.length) result[start + i] = m[2].trim() || null;
         }
       } catch (err) {
         // Leave this batch null so only its words fall back, not the whole clip.
