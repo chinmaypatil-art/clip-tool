@@ -18,9 +18,10 @@ export async function GET(
   // analysis's own runs — this (not the filename string itself) is what
   // makes the lookup safe against path traversal.
   let isThumbnail = false;
-  const match = analysis.runs.some((run) =>
+  // The editor previews edits by playing the source itself.
+  const match = (filename === "source.mp4" && !analysis.sourceDeleted) || analysis.runs.some((run) =>
     run.clips.some((clip) => {
-      if (clip.renderFilename === filename || segmentFilename(run.id, clip.id) === filename) return true;
+      if (clip.renderFilename === filename || clip.wordsFilename === filename || segmentFilename(run.id, clip.id) === filename) return true;
       if (clip.renderThumbnailFilename === filename) {
         isThumbnail = true;
         return true;
@@ -35,7 +36,7 @@ export async function GET(
   if (!stats) return NextResponse.json({ error: "File missing on disk." }, { status: 404 });
 
   const headers = {
-    "Content-Type": isThumbnail ? "image/jpeg" : "video/mp4",
+    "Content-Type": isThumbnail ? "image/jpeg" : filename.endsWith(".json") ? "application/json" : "video/mp4",
     "Content-Disposition": dispositionFor(req, filename),
     "Accept-Ranges": "bytes",
   };

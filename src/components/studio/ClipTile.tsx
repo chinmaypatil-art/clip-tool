@@ -2,11 +2,12 @@
 
 import { useState } from "react";
 import { motion } from "framer-motion";
-import { AlertCircle, Download, ExternalLink, Loader2, RotateCw, Scissors, ThumbsDown, ThumbsUp } from "lucide-react";
+import { AlertCircle, Download, ExternalLink, Loader2, Pencil, RotateCw, Scissors, ThumbsDown, ThumbsUp } from "lucide-react";
 import type { AnalysisClip } from "@/lib/analyses";
 import type { TranscriptSegment } from "@/lib/transcript";
 import { ClipReviewPanel } from "@/components/ClipReviewPanel";
 import { QuickFeedback } from "./QuickFeedback";
+import { ClipEditor } from "./ClipEditor";
 import { clock, cn, linkAt } from "./format";
 
 export function ClipTile({
@@ -32,6 +33,7 @@ export function ClipTile({
   onChanged: () => void;
 }) {
   const [reviewing, setReviewing] = useState(false);
+  const [editing, setEditing] = useState(false);
   const [starting, setStarting] = useState(false);
   const length = clip.endSeconds - clip.startSeconds;
   const fileUrl = clip.renderFilename ? `/api/analyses/${analysisId}/files/${clip.renderFilename}` : null;
@@ -146,6 +148,14 @@ export function ClipTile({
           >
             <Scissors size={13} /> Fix start/end
           </button>
+          {canRender && (
+            <button
+              onClick={() => setEditing(true)}
+              className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-white/[0.06] py-1.5 text-xs text-zinc-200 transition hover:bg-white/[0.12]"
+            >
+              <Pencil size={13} /> Edit
+            </button>
+          )}
         </div>
         <QuickFeedback
           key={clip.review?.reviewedAt ?? "new"}
@@ -153,6 +163,7 @@ export function ClipTile({
           review={clip.review}
           onSaved={onChanged}
         />
+        {editing && <ClipEditor analysisId={analysisId} runId={runId} clip={clip} onClose={() => setEditing(false)} onSaved={onChanged} />}
         {reviewing && (
           <ClipReviewPanel
             analysisId={analysisId}
