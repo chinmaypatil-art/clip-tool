@@ -95,13 +95,20 @@ export async function downloadVideo(
       "Spotify links are not supported — Spotify streams are DRM-protected and cannot be downloaded. Use a direct podcast RSS/MP3 link, YouTube, Instagram, TikTok, or Facebook instead."
     );
   }
+  // Long videos (streams run 3-4 h) download at 720p: 1080p would be ~7.5 GB
+  // for 4 h. Unknown length (lookup failed) keeps 1080p.
+  const duration = await execFileAsync(getYtDlpPath(), ["--print", "duration", "--skip-download", "--no-playlist", url], { timeout: 60_000 })
+    .then(({ stdout }) => Number(String(stdout).trim().split(/\s+/)[0]))
+    .catch(() => NaN);
+  const maxHeight = duration > LONG_VIDEO_SECONDS ? 720 : 1080;
+
   // YouTube sometimes refuses a download outright (HTTP 403), which yt-dlp
   // treats as final; a fresh attempt a few seconds later usually works.
   const waits = [5, 20, 60];
   for (let attempt = 0; ; attempt++) {
     if (signal?.aborted) throw new CancelledError();
     try {
-      return await runDownload(url, outPath, onProgress, signal);
+      return await runDownload(url, outPath, maxHeight, onProgress, signal);
     } catch (err) {
       const refused = err instanceof MediaError && /HTTP 403/.test(err.message);
       if (!refused || attempt >= waits.length) throw err;
@@ -111,9 +118,12 @@ export async function downloadVideo(
   }
 }
 
+const LONG_VIDEO_SECONDS = 90 * 60;
+
 function runDownload(
   url: string,
   outPath: string,
+  maxHeight: number,
   onProgress?: (line: string) => void,
   signal?: AbortSignal
 ): Promise<void> {
@@ -123,11 +133,11 @@ function runDownload(
       ytDlp,
       [
         url,
-        // Cap at 1080p: clips never need more, and 4K sources are many times larger.
+        // Cap at 1080p (720p for long videos): clips never need more, and 4K sources are many times larger.
         // Prefer H.264: Remotion's decoder intermittently lost frames seeking
         // in YouTube's VP9 ("No frame found at position"), failing renders.
         "-f",
-        "bv*[height<=1080][vcodec^=avc1]+ba[ext=m4a]/bv*[height<=1080][ext=mp4]+ba[ext=m4a]/b[height<=1080][ext=mp4]/bv*[height<=1080]+ba/b[height<=1080]/b",
+        `bv*[height<=${maxHeight}][vcodec^=avc1]+ba[ext=m4a]/bv*[height<=${maxHeight}][ext=mp4]+ba[ext=m4a]/b[height<=${maxHeight}][ext=mp4]/bv*[height<=${maxHeight}]+ba/b[height<=${maxHeight}]/b`,
         // Fetch DASH/HLS fragments in parallel instead of one at a time.
         "--concurrent-fragments",
         "8",
@@ -148,8 +158,6 @@ function runDownload(
         // A live stream never finishes downloading.
         "--match-filter",
         "!is_live",
-        "--max-filesize",
-        "2G",
       ],
       { windowsHide: true }
     );
