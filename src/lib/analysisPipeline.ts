@@ -1,6 +1,7 @@
 import path from "path";
 import { copyFile, rm } from "fs/promises";
-import { createTikTokStyleCaptions } from "@remotion/captions";
+import { createTikTokStyleCaptions, type Caption } from "@remotion/captions";
+import { keepRanges, keptLength, remapCaptions, remapFraming } from "./tighten";
 import { randomUUID } from "crypto";
 import { createLimiter } from "./limit";
 import { processSingleton } from "./processState";
@@ -449,18 +450,14 @@ export async function renderAnalysisClip(analysisId: string, runId: string, clip
 
     // Older analyses have no setting and keep the default captions.
     const captionStyle = analysis.captionStyle === null ? null : parseCaptionStyle(analysis.captionStyle);
-    let captionPages: ReturnType<typeof createTikTokStyleCaptions>["pages"] = [];
+    let captions: Caption[] = [];
     try {
       if (captionStyle) {
         await extractAudioSegment(sourcePath, wavPath, startSeconds, clipLength);
-        const captions = await transcribeWav(wavPath, {
+        captions = await transcribeWav(wavPath, {
           romanizer: await getLocalRomanizer(run.provider, run.model),
           reference: referenceText(analysis.transcript?.segments, startSeconds, startSeconds + clipLength),
         });
-        captionPages = createTikTokStyleCaptions({
-          captions,
-          combineTokensWithinMilliseconds: WORDS_COMBINE_MS[captionStyle.words],
-        }).pages;
       }
     } catch (err) {
       console.error(`[analysisPipeline] caption generation failed for ${analysisId}/${runId}/${clipId}:`, err);
@@ -483,23 +480,33 @@ export async function renderAnalysisClip(analysisId: string, runId: string, clip
     // folder, so the cut is fetched over HTTP from the app instead.
     const segment = segmentFilename(runId, clip.id);
     const segmentPath = path.join(dir, segment);
-    await cutClip(sourcePath, segmentPath, startSeconds, endSeconds);
+    // Fillers and long pauses come out using the caption words' timings, so a
+    // clip rendered without captions keeps its pauses.
+    const keep = keepRanges(captions, clipLength);
+    const outLength = keptLength(keep);
+    await cutClip(sourcePath, segmentPath, startSeconds, endSeconds, keep);
+    const captionPages = captionStyle
+      ? createTikTokStyleCaptions({
+          captions: remapCaptions(captions, keep),
+          combineTokensWithinMilliseconds: WORDS_COMBINE_MS[captionStyle.words],
+        }).pages
+      : [];
 
     await renderClip({
       serveUrl,
       outputPath: outPath,
       videoFileName: `${APP_ORIGIN}/api/analyses/${analysisId}/files/${segment}`,
       trimStartSeconds: 0,
-      durationSeconds: clipLength,
+      durationSeconds: outLength,
       title: clip.title,
       captionPages,
       captionStyle,
-      framing: await framingPromise,
+      framing: remapFraming(await framingPromise, keep),
       segmentPath,
       onStart: () => updateRunClip(analysisId, runId, clipId, { renderStartedAt: Date.now() }),
     }).finally(() => rm(segmentPath, { force: true }).catch(() => {}));
 
-    await captureThumbnail(outPath, path.join(dir, thumbFilename), clipLength);
+    await captureThumbnail(outPath, path.join(dir, thumbFilename), outLength);
 
     updateRunClip(analysisId, runId, clipId, {
       renderStatus: "done",

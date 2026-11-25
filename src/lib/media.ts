@@ -348,10 +348,27 @@ export async function cutClip(
   sourcePath: string,
   outPath: string,
   startSeconds: number,
-  endSeconds: number
+  endSeconds: number,
+  /** Pieces to keep, in seconds from startSeconds (see tighten.ts); omitted keeps it all. */
+  keep?: Array<[number, number]>
 ): Promise<void> {
   const ffmpeg = getFfmpegPath();
   const duration = Math.max(0.1, endSeconds - startSeconds);
+  // A 15 ms fade on each side of every cut so joins don't click.
+  const joins =
+    keep && keep.length > 1
+      ? [
+          "-filter_complex",
+          keep
+            .map(([s, e], i) => {
+              const fadeOut = Math.max(0, e - s - 0.015).toFixed(3);
+              return `[0:v]trim=${s.toFixed(3)}:${e.toFixed(3)},setpts=PTS-STARTPTS[v${i}];` +
+                `[0:a]atrim=${s.toFixed(3)}:${e.toFixed(3)},asetpts=PTS-STARTPTS,afade=t=in:d=0.015,afade=t=out:st=${fadeOut}:d=0.015[a${i}];`;
+            })
+            .join("") + `${keep.map((_, i) => `[v${i}][a${i}]`).join("")}concat=n=${keep.length}:v=1:a=1[v][a]`,
+          "-map", "[v]", "-map", "[a]",
+        ]
+      : [];
   try {
     await execFileAsync(ffmpeg, [
       "-y",
@@ -361,6 +378,7 @@ export async function cutClip(
       sourcePath,
       "-t",
       duration.toFixed(2),
+      ...joins,
       "-c:v",
       "libx264",
       "-preset",
