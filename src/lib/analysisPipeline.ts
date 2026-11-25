@@ -34,7 +34,7 @@ import { trimTrailingQuestion, fitToMaxLength, snapToSentences, endContext, snap
 
 export class AnalysisPipelineError extends Error {}
 
-// Picks this far under the chosen minimum are still kept (see validation.ts).
+// Picks this far under the chosen minimum are still kept.
 const SHORT_TOLERANCE = 0.6;
 // A local model reading one window marks the moment itself and ignores long
 // length ranges (30-155s picks for a 3-4 min setting, all dropped). Any pick

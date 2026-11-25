@@ -11,39 +11,45 @@ for rendering. No paid APIs.
 
 ## Features
 
-- **One flow.** Link or upload in, five clips out. Progress is shown live and
-  the job keeps running if you leave the page.
-- **Clean clips.** Edges snap to whole sentences and to pauses in the audio. A
-  clip never cuts the speaker off mid-thought, and a short topic stays a
-  shorter clip instead of being padded with the next one.
-- **Smart framing.** Face detection chooses fill, fit or a two-person split
-  layout per shot.
-- **Captions.** Word-by-word karaoke captions, on or off, with presets
-  (Classic, Bold, Boxed, Minimal) and custom font, size, colours, background,
-  position and words on screen.
-- **Library.** Every video with its clips, searchable. Each clip shows its
-  source timestamps (linked to the YouTube moment) and downloads under its
-  title.
-- **Feedback for training.** Good / Bad on every clip in one tap, with optional
-  tags and a note. Edges can be corrected a sentence at a time.
-- **Sharing.** Optional password gate and a one-click start script for
-  publishing the app from your PC with Tailscale Funnel.
+- **One flow.** Link or upload in, five clips out. Progress is live and the
+  job keeps running if you leave the page.
+- **Clip picking.** Gemma reads the transcript by numbered lines and picks
+  whole thoughts, with a "Why:" for each. An optional focus ("funny moments",
+  "money advice") steers it.
+- **Hook-first openings.** Where a clip has a stronger line than its opening,
+  that line plays first as a teaser, then the clip from its start.
+- **Clean audio and pacing.** Two-pass loudness to -14 LUFS with denoise and a
+  limiter; long pauses and "um"s are trimmed.
+- **Speaker framing.** Face detection follows whoever is talking, shows both
+  people in split shots, and zooms out when someone gestures.
+- **Captions.** Word-by-word captions with presets and custom font, size,
+  colours, background and position.
+- **Editor.** Full-screen editor per clip:
+  - *Ask AI*: type "cut the intro", "make it 40 seconds", "remove the ums".
+  - *Transcript*: cut words, set start/end on a word, fix spelling, change
+    framing for a stretch, remove all fillers or silences in one click.
+  - *Options*: hook, pause trimming, captions and caption style per clip.
+  - Live preview, timeline, undo/redo, reset to the AI version.
+- **Feedback for training.** Good / Bad on every clip, with tags and a note.
+- **Sharing.** Password gate and a start script that publishes the app from
+  your PC with Tailscale Funnel.
 
 ## How it works
 
 ```
 video (YouTube link or upload)
   → transcript    YouTube captions when available, else Whisper large-v3-turbo (GPU)
-  → picking       Gemma 3 12B reads the transcript in windows, returns clips
-  → cleanup       length limits, overlap removal, sentence and silence snapping
-  → per clip      Whisper word timings for captions, face detection for framing
-  → render        ffmpeg filter graph + ASS captions, h264_nvenc → 1080x1920 MP4
+  → picking       Gemma 3 12B picks clips window by window, re-ranks them, picks hooks
+  → cleanup       length limits, overlaps, sentence and silence snapping
+  → per clip      Whisper word timings, face/speaker framing, pause trimming,
+                  user edits, hook-first cut
+  → render        ffmpeg filter graph + ASS captions + loudness, h264_nvenc → 1080x1920 MP4
                   (Remotion is the fallback if ffmpeg fails)
 ```
 
-A 25-minute video takes about 10 minutes end to end on an RTX 4060 Ti: about
-2.5 minutes to download, 1–2 minutes to pick clips, and the rest preparing
-and rendering clips two at a time.
+A 25-minute video takes about 10 minutes on an RTX 4060 Ti: a few minutes to
+download and pick, then clips render one at a time (about 1.5 min each), so
+the first clip is ready early.
 
 ## Requirements
 
@@ -74,16 +80,19 @@ npm start
 
 ## Sharing with others
 
-To give one or two people access while everything keeps running on your PC:
+To give one or two people access while everything runs on your PC:
 
 1. Set `APP_PASSWORD` in `.env.local`. Every page then asks for it.
 2. Install [Tailscale](https://tailscale.com), log in, and enable Funnel for
    your tailnet.
-3. Run `npm run build`, then double-click `scripts/start-shared.cmd`. It
-   publishes port 3000 at `https://<machine>.<tailnet>.ts.net` and starts the
-   app. Keep its window open.
+3. Run `npm run build`, then `scripts/start-shared.cmd` (or install it as a
+   boot task with `scripts/install-boot-task.ps1`). It publishes port 3000 at
+   `https://<machine>.<tailnet>.ts.net` and restarts the app if it stops.
 
-The PC must stay on and awake while the link is in use.
+**Updating:** just run `npm run build`. The build goes to `.next-new`, so the
+running app is untouched; once no job is running and nobody has used the site
+for 5 minutes, the app restarts and swaps the new build in
+(`scripts/swap-build.mjs`).
 
 ## Configuration
 
@@ -113,6 +122,9 @@ Every review is stored three ways, so no label is ever lost:
 | `storage/training/reviews.jsonl` | Every reviewed clip, rebuilt on each save |
 | `storage/training/sft.jsonl` | Chat-format fine-tuning examples, one per reviewed transcript window, using the exact prompt Gemma picks with |
 
+`storage/training/replayed-sft.jsonl` adds examples built from YouTube "Most
+replayed" data (`scripts/collect-replayed.mts`).
+
 Deleting a video from the Library removes its media but keeps its reviews.
 Clips picked by Gemini are kept out of `sft.jsonl` (API terms).
 
@@ -128,13 +140,15 @@ reviewed clips.
 | `src/lib/analysisPipeline.ts` | The pipeline: transcript, picking, cleanup, rendering |
 | `src/lib/clipTrim.ts` | Sentence and silence snapping for clip edges |
 | `src/lib/ffmpegRender.ts` | ffmpeg renderer and ASS caption builder |
-| `src/lib/framing.ts` | Face detection and shot layout |
+| `src/lib/framing.ts` | Face detection, speaker following, gesture zoom |
+| `src/lib/tighten.ts` | Pause/filler trimming and timeline remapping |
+| `src/lib/clipEdit.ts`, `src/lib/aiEdit.ts` | Editor edits and Ask AI |
 | `src/lib/captionStyle.ts` | Caption presets and options |
 | `src/lib/providers/` | Model providers (Ollama, Gemini, OpenAI-compatible, ...) |
 | `src/lib/training.ts` | Training data export and review log |
 | `src/proxy.ts`, `src/lib/access.ts` | Password gate |
 | `remotion/` | Fallback Remotion template |
-| `scripts/` | Start script and developer tools (see each file's header) |
+| `scripts/` | Start/deploy scripts, `check-*` self-checks, timing and test tools |
 | `storage/` | Runtime data. Not committed |
 
 ## Lab
