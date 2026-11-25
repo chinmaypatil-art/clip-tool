@@ -410,6 +410,39 @@ async function romanize(captions: Caption[], romanizer: Romanizer, reference?: s
   }));
 }
 
+const MAX_REPEATS = 3;
+/**
+ * Whisper sometimes loops on noise (crowd, music, game sounds) and writes a
+ * word or short phrase dozens of times ("aaj aaj aaj ...", "do ki do ki ...").
+ * Keeps at most 3 repeats in a row of any 1–4 word phrase.
+ */
+export function dropRepeats(captions: Caption[]): Caption[] {
+  const key = (c: Caption) => c.text.toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
+  const out: Caption[] = [];
+  const keys: string[] = [];
+  // While inside a loop: its phrase length and how many words were dropped.
+  let loop: { n: number; dropped: number } | null = null;
+  for (const c of captions) {
+    const k = key(c);
+    const len = keys.length;
+    if (loop && k !== keys[len - loop.n + (loop.dropped % loop.n)]) loop = null;
+    if (!loop && k) {
+      const n = [1, 2, 3, 4].find((n) => {
+        if (len < n * MAX_REPEATS || keys[len - n] !== k) return false;
+        for (let j = len - n * MAX_REPEATS; j < len - n; j++) if (keys[j] !== keys[j + n] || !keys[j]) return false;
+        return true;
+      });
+      if (n) loop = { n, dropped: 0 };
+    }
+    if (loop) loop.dropped++;
+    else {
+      out.push(c);
+      keys.push(k);
+    }
+  }
+  return out;
+}
+
 /**
  * Transcribes an already-16kHz-mono WAV file with word-level timestamps.
  * Use `extractAudioSegment` from `./media` to produce a compliant WAV first.
@@ -433,7 +466,7 @@ export async function transcribeWav(
     const hinglish = !LANGUAGE_OVERRIDE && language === "hi";
     const prompt = hinglish ? HINGLISH_PROMPT : null;
     const words = await transcribeWords(wavPath, language as Language, prompt);
-    const complete = await fillGaps(wavPath, words, language as Language, prompt);
+    const complete = dropRepeats(await fillGaps(wavPath, words, language as Language, prompt));
     return hinglish && romanizer ? await romanize(complete, romanizer, reference) : complete;
   } catch (err) {
     throw new WhisperError(`whisper.cpp transcription failed for "${wavPath}": ${describeError(err)}`, err);

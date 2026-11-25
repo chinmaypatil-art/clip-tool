@@ -61,9 +61,9 @@ export function ClipTile({
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay: index * 0.04 }}
-      className="flex flex-col"
+      className="group flex h-full flex-col overflow-hidden rounded-2xl border border-white/[0.08] bg-gradient-to-b from-white/[0.035] to-white/[0.01] shadow-[0_1px_0_0_rgba(255,255,255,0.04)_inset] transition hover:border-white/[0.16] hover:shadow-[0_12px_40px_-12px_rgba(0,0,0,0.8)]"
     >
-      <div className="relative aspect-[9/16] overflow-hidden rounded-2xl bg-white/[0.03] ring-1 ring-white/10">
+      <div className="relative aspect-[9/16] overflow-hidden bg-black">
         {clip.renderStatus === "done" && fileUrl ? (
           <video src={fileUrl} poster={thumbUrl} controls preload="none" className="h-full w-full object-contain" />
         ) : (
@@ -92,9 +92,13 @@ export function ClipTile({
             )}
           </div>
         )}
-        <span className="pointer-events-none absolute left-2 top-2 rounded-md bg-black/60 px-1.5 py-0.5 text-[11px] font-medium tabular-nums text-white backdrop-blur">
-          {clock(length)}
-        </span>
+        <div className="pointer-events-none absolute left-2 top-2 flex gap-1">
+          <span className="rounded-md bg-white/90 px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-zinc-900">#{index + 1}</span>
+          <span className="rounded-md bg-black/60 px-1.5 py-0.5 text-[10px] font-medium tabular-nums text-white ring-1 ring-white/10 backdrop-blur">
+            {clock(length)}
+          </span>
+          {clip.edit && <span className="rounded-md bg-sky-500/80 px-1.5 py-0.5 text-[10px] font-medium text-white backdrop-blur">Edited</span>}
+        </div>
         {clip.review && (
           <span
             className={cn(
@@ -107,8 +111,10 @@ export function ClipTile({
         )}
       </div>
 
-      <div className="mt-3 flex min-w-0 flex-1 flex-col px-0.5">
-        <h3 className="line-clamp-2 text-sm font-medium leading-snug text-zinc-100">{clip.title}</h3>
+      <div className="flex min-w-0 flex-1 flex-col p-3.5">
+        <h3 className="line-clamp-2 min-h-[2.5rem] text-[13px] font-semibold leading-5 tracking-tight text-zinc-50" title={clip.title}>
+          {clip.title}
+        </h3>
         <div className="mt-1.5 flex flex-wrap items-center gap-x-1.5 text-xs tabular-nums text-zinc-500">
           {sourceLink ? (
             <a href={sourceLink} target="_blank" rel="noreferrer" className="flex items-center gap-1 hover:text-zinc-300" title="Open the source here">
@@ -121,19 +127,22 @@ export function ClipTile({
           )}
           {shortOf !== undefined && length < shortOf - 1 && <span className="text-amber-400/80">· shorter than asked</span>}
         </div>
-        {clip.hook && <p className="mt-1.5 line-clamp-2 text-xs italic text-zinc-500">&ldquo;{clip.hook}&rdquo;</p>}
+        {clip.hook && (
+          <p className="mt-2.5 line-clamp-2 border-l-2 border-amber-400/60 pl-2 text-[11px] italic leading-4 text-zinc-400" title="Opens with this line">
+            &ldquo;{clip.hook}&rdquo;
+          </p>
+        )}
         {clip.reasoning && (
-          <p className="mt-1 line-clamp-3 text-xs text-zinc-400">
-            <span className="text-zinc-500">Why: </span>
+          <p className="mt-2 line-clamp-2 text-[11px] leading-4 text-zinc-500" title={clip.reasoning}>
             {clip.reasoning}
           </p>
         )}
 
-        <div className="mt-3 flex gap-1.5">
+        <div className="mt-auto flex gap-1.5 pt-3.5">
           {canRender && (
             <button
               onClick={() => setEditing(true)}
-              className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-white py-2 text-xs font-medium text-zinc-900 transition hover:bg-zinc-200"
+              className="flex h-9 flex-1 items-center justify-center gap-1.5 rounded-lg bg-white text-xs font-semibold text-zinc-900 shadow-sm transition hover:bg-zinc-200 active:scale-[0.98]"
             >
               <Pencil size={13} /> Edit clip
             </button>
@@ -143,7 +152,7 @@ export function ClipTile({
               href={`${fileUrl}?download=${encodeURIComponent(clip.title)}`}
               title="Download"
               aria-label="Download"
-              className="flex w-9 items-center justify-center rounded-lg bg-white/[0.06] text-zinc-200 transition hover:bg-white/[0.12]"
+              className="flex h-9 w-9 items-center justify-center rounded-lg border border-white/[0.08] bg-white/[0.04] text-zinc-300 transition hover:bg-white/[0.1] hover:text-white"
             >
               <Download size={14} />
             </a>
@@ -153,8 +162,8 @@ export function ClipTile({
             title="Move the start or end by a sentence"
             aria-label="Fix start/end"
             className={cn(
-              "flex w-9 items-center justify-center rounded-lg transition",
-              reviewing ? "bg-white text-zinc-900" : "bg-white/[0.06] text-zinc-200 hover:bg-white/[0.12]"
+              "flex h-9 w-9 items-center justify-center rounded-lg border transition",
+              reviewing ? "border-white bg-white text-zinc-900" : "border-white/[0.08] bg-white/[0.04] text-zinc-300 hover:bg-white/[0.1] hover:text-white"
             )}
           >
             <Scissors size={14} />

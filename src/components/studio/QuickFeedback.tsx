@@ -63,27 +63,28 @@ export function QuickFeedback({
   const tags = verdict === "good" ? GOOD_REASONS : verdict === "bad" ? REJECT_REASONS : null;
 
   return (
-    <div className="mt-3 space-y-2">
-      <div className="flex items-center gap-1.5">
+    <div className="mt-3 space-y-2 border-t border-white/[0.06] pt-2.5">
+      <div className="flex items-center gap-1">
+        <span className="mr-auto text-[11px] text-zinc-500">{verdict ? "Your rating" : "Rate this clip"}</span>
         <button
           onClick={() => pick("good")}
           title="Good clip"
           className={cn(
-            "flex flex-1 items-center justify-center gap-1.5 rounded-lg py-1.5 text-xs transition",
-            verdict === "good" ? "bg-emerald-500 text-white" : "bg-white/[0.06] text-zinc-300 hover:bg-emerald-500/20 hover:text-emerald-200"
+            "flex h-7 items-center gap-1 rounded-md px-2 text-[11px] transition",
+            verdict === "good" ? "bg-emerald-500 text-white" : "text-zinc-400 hover:bg-emerald-500/15 hover:text-emerald-200"
           )}
         >
-          <ThumbsUp size={13} /> Good
+          <ThumbsUp size={12} /> Good
         </button>
         <button
           onClick={() => pick("bad")}
           title="Bad clip"
           className={cn(
-            "flex flex-1 items-center justify-center gap-1.5 rounded-lg py-1.5 text-xs transition",
-            verdict === "bad" ? "bg-red-500 text-white" : "bg-white/[0.06] text-zinc-300 hover:bg-red-500/20 hover:text-red-200"
+            "flex h-7 items-center gap-1 rounded-md px-2 text-[11px] transition",
+            verdict === "bad" ? "bg-red-500 text-white" : "text-zinc-400 hover:bg-red-500/15 hover:text-red-200"
           )}
         >
-          <ThumbsDown size={13} /> Bad
+          <ThumbsDown size={12} /> Bad
         </button>
       </div>
 
@@ -120,7 +121,7 @@ export function QuickFeedback({
         </>
       )}
 
-      <p className="h-3 text-[10px] text-zinc-500">
+      <p className={cn("text-[10px] text-zinc-500", state === "idle" ? "hidden" : "h-3")}>
         {state === "saving" && (
           <span className="flex items-center gap-1">
             <Loader2 size={10} className="animate-spin" /> Saving
