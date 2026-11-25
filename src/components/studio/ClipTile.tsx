@@ -130,32 +130,35 @@ export function ClipTile({
         )}
 
         <div className="mt-3 flex gap-1.5">
+          {canRender && (
+            <button
+              onClick={() => setEditing(true)}
+              className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-white py-2 text-xs font-medium text-zinc-900 transition hover:bg-zinc-200"
+            >
+              <Pencil size={13} /> Edit clip
+            </button>
+          )}
           {fileUrl && clip.renderStatus === "done" && (
             <a
               href={`${fileUrl}?download=${encodeURIComponent(clip.title)}`}
-              className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-white/[0.06] py-1.5 text-xs text-zinc-200 transition hover:bg-white/[0.12]"
+              title="Download"
+              aria-label="Download"
+              className="flex w-9 items-center justify-center rounded-lg bg-white/[0.06] text-zinc-200 transition hover:bg-white/[0.12]"
             >
-              <Download size={13} /> Download
+              <Download size={14} />
             </a>
           )}
           <button
             onClick={() => setReviewing((r) => !r)}
             title="Move the start or end by a sentence"
+            aria-label="Fix start/end"
             className={cn(
-              "flex flex-1 items-center justify-center gap-1.5 rounded-lg py-1.5 text-xs transition",
+              "flex w-9 items-center justify-center rounded-lg transition",
               reviewing ? "bg-white text-zinc-900" : "bg-white/[0.06] text-zinc-200 hover:bg-white/[0.12]"
             )}
           >
-            <Scissors size={13} /> Fix start/end
+            <Scissors size={14} />
           </button>
-          {canRender && (
-            <button
-              onClick={() => setEditing(true)}
-              className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-white/[0.06] py-1.5 text-xs text-zinc-200 transition hover:bg-white/[0.12]"
-            >
-              <Pencil size={13} /> Edit
-            </button>
-          )}
         </div>
         <QuickFeedback
           key={clip.review?.reviewedAt ?? "new"}
