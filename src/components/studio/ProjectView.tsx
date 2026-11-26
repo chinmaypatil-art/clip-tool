@@ -33,7 +33,7 @@ const STEPS = ["Downloading", "Reading transcript", "Finding the best moments", 
 function stepOf(a: Analysis, run: ModelRun | undefined): number | "error" {
   if (a.status === "error" || run?.status === "error") return "error";
   if (a.status === "extracting_transcript") return a.downloadedAt ? 1 : 0;
-  if (!run && a.waitingForClaude) return 4;
+  if (!run && a.waitingForClaude) return 2;
   if (!run || run.status === "running" || run.status === "queued") return a.oneClick ? 2 : 4;
   if (run.clips.some((c) => c.renderStatus === "rendering")) return 3;
   return 4;
@@ -183,8 +183,10 @@ export function ProjectView({ id, onBack }: { id: string; onBack: () => void }) 
       )}
       {!run && analysis.waitingForClaude && (
         <div className="rounded-2xl border border-white/10 bg-white/[0.02] px-6 py-10 text-center">
-          <p className="text-sm text-zinc-200">This video has almost no speech, so Claude will pick the clips by watching it.</p>
-          <p className="mt-2 text-xs text-zinc-500">Ask Claude to pick clips for this video. They show up here when it&apos;s done.</p>
+          <p className="text-sm text-zinc-200">
+            {analysis.picker === "claude" ? "Claude is watching the video and picking the clips." : "This video has almost no speech, so Claude is watching it and picking the clips."}
+          </p>
+          <p className="mt-2 text-xs text-zinc-500">Usually 10–20 minutes. The clips show up here by themselves.</p>
         </div>
       )}
       {run?.status === "done" && clips.length === 0 && (

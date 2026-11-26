@@ -90,6 +90,7 @@ function clipRules(range: ClipLengthRange): string {
 - For interviews/podcasts: start the clip on the interviewer's question or setup line, not mid-answer, so the viewer sees both people and gets the context.
 - End the clip only once the speaker has FINISHED their point: the last line must land the payoff/conclusion, not stop mid-explanation or mid-story. Right after that line, stop — NEVER include the start of the next question, a new topic, or a transition line. If the moment is shorter than the range, add setup context BEFORE it, never extra lines after it.
 - Has genuine substance — not filler or someone trailing off.
+- For sports, gaming or any live action with commentary: the clip must contain a real event (a six, a wicket, a goal, a catch, a kill, a fall, a big win). Start a few seconds BEFORE the action (the run-up, the delivery, the attack), never after it, and end once the reaction or celebration has landed. Skip stretches where nothing happens: dot balls, score recaps, safety notices, talk about tactics, breaks. The replay of an event is the same event, not a new clip.
 - Never includes channel promotion: asking viewers to like, share, subscribe, follow or comment, or a sponsor/ad read.`;
 }
 

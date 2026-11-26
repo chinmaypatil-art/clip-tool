@@ -22,7 +22,7 @@ import { OUTPUT_ASPECT, type FramingSegment } from "../../remotion/types";
  * - Several people who don't fit: follow whoever is talking (most movement in
  *   the lower half of the face across frames — a still photo or a listener
  *   barely moves); if nobody clearly is, letterbox so nobody gets cut.
- * - No usable face (b-roll, graphics, wide shots): letterbox.
+ * - No usable face (b-roll, sports wide shots, gameplay): fill from the centre.
  *
  * Runs on CPU, so it works the same on a GPU server or a plain laptop-class box.
  */
@@ -263,10 +263,12 @@ function decideShot(
   crop: number,
   sourceAspect: number
 ): Pick<FramingSegment, "mode" | "focusX" | "people" | "sourceAspect"> {
-  const fit = { mode: "fit" as const, focusX: 50 };
   if (crop >= 1) return { mode: "fill", focusX: 50 }; // source is already at least as tall as 9:16
   const people = groupPeople(samples);
-  if (people.length === 0) return fit;
+  // No face to follow (sports wide shots, food, gameplay): fill the screen
+  // from the centre, where the action usually is. Letterboxing the whole
+  // frame left a cricket pitch as a thin strip with the players too small.
+  if (people.length === 0) return { mode: "fill", focusX: 50 };
 
   const margin = 0.02;
   const left = Math.min(...people.map((p) => median(p.left))) - margin;

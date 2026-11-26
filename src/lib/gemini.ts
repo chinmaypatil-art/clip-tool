@@ -474,9 +474,10 @@ export async function romanizeInBatches(
   await Promise.all(
     batches.map(async (start) => {
       const batch = words.slice(start, start + ROMANIZE_BATCH);
-      const prompt = `Numbered words from a Hindi/Hinglish speech transcript, in order. Some are in Devanagari, some already in Latin script.
+      const prompt = `Numbered words from a Hindi, Marathi or Hinglish speech transcript, in order. Some are in Devanagari, some already in Latin script.
 
 Rewrite each word in Latin script the way Indians write Hinglish in Instagram/YouTube captions:
+- Marathi words: the same everyday Latin spelling Marathi speakers type ("आहे" -> "aahe", "मारलाय" -> "maarlay", "षटकार" -> "shatkar", "पुढचा" -> "pudhcha"). Never swap a word for a different word.
 - Hindi words: common Hinglish spelling ("हैं" -> "hain", "नहीं" -> "nahi", "करना" -> "karna", "ज़्यादा" -> "zyada").
 - English words written in Devanagari: normal English spelling ("क्रिएटर्स" -> "creators", "मॉडल्स" -> "models").
 - English words already in Latin script but spelled by sound: correct English ("aaitam" -> "item", "sekund" -> "second", "shotgan" -> "shotgun", "phone" stays "phone").

@@ -15,9 +15,11 @@ interface Settings {
   clipCount: number;
   captions: boolean;
   captionStyle: CaptionStyle;
+  /** "auto": Gemma when there is speech, else Claude. "claude": Claude always. */
+  picker: "auto" | "claude";
 }
 
-const DEFAULT_SETTINGS: Settings = { clipLength: DEFAULT_CLIP_LENGTH, clipCount: DEFAULT_CLIP_COUNT, captions: true, captionStyle: DEFAULT_CAPTION_STYLE };
+const DEFAULT_SETTINGS: Settings = { clipLength: DEFAULT_CLIP_LENGTH, clipCount: DEFAULT_CLIP_COUNT, captions: true, captionStyle: DEFAULT_CAPTION_STYLE, picker: "auto" };
 
 function loadSettings(): Settings {
   const fallback = DEFAULT_SETTINGS;
@@ -29,6 +31,7 @@ function loadSettings(): Settings {
       clipCount: parseClipCount(raw.clipCount),
       captions: raw.captions !== false,
       captionStyle: parseCaptionStyle(raw.captionStyle),
+      picker: raw.picker === "claude" ? "claude" : "auto",
     };
   } catch {
     return fallback;
@@ -218,6 +221,24 @@ export function CreateView({ onStarted }: { onStarted: (analysisId: string) => v
             ))}
           </select>
         </label>
+        <div className="flex items-center gap-2">
+          <span className="text-zinc-500">Picked by</span>
+          <div className="flex rounded-lg bg-white/[0.04] p-0.5">
+            {(["auto", "claude"] as const).map((p) => (
+              <button
+                key={p}
+                onClick={() => update({ picker: p })}
+                title={p === "auto" ? "Gemma reads the speech; videos with almost no speech go to Claude" : "Claude watches the video and picks"}
+                className={cn(
+                  "rounded-md px-2.5 py-1 text-xs transition",
+                  settings.picker === p ? "bg-white/10 text-white" : "text-zinc-500 hover:text-zinc-300"
+                )}
+              >
+                {p === "auto" ? "Auto" : "Claude"}
+              </button>
+            ))}
+          </div>
+        </div>
         <div className="flex items-center gap-2">
           <span className="text-zinc-500">Captions</span>
           <button

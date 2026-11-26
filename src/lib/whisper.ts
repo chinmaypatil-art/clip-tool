@@ -444,6 +444,44 @@ export function dropRepeats(captions: Caption[]): Caption[] {
   return out;
 }
 
+const FILLERS = new Set(["uh", "uhh", "um", "umm", "uhm", "hmm", "hm", "mm", "mhm", "er", "erm", "ah", "eh"]);
+
+/** Hesitation sounds ("uh", "um") never belong in a caption. */
+export function dropFillers(captions: Caption[]): Caption[] {
+  return captions.filter((c) => !FILLERS.has(c.text.toLowerCase().replace(/[^\p{L}]/gu, "")));
+}
+
+/**
+ * A phrase of 4+ words heard again within 30 s is an echo (a replay's
+ * commentary, or whisper looping), not new speech: caption it once.
+ */
+export function dropEchoes(captions: Caption[], minWords = 4, withinMs = 30_000): Caption[] {
+  const key = (c: Caption) => c.text.toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
+  const out: Caption[] = [];
+  const keys: string[] = [];
+  for (let i = 0; i < captions.length; ) {
+    const run = captions.slice(i, i + minWords).map(key);
+    let skip = 0;
+    if (run.length === minWords && run.every(Boolean)) {
+      // Only the last 30 s of kept words, so a 9-hour transcript stays fast.
+      for (let j = out.length - minWords; j >= 0 && captions[i].startMs - out[j].startMs <= withinMs; j--) {
+        if (run.every((k, m) => keys[j + m] === k)) {
+          // The echo runs on as long as it follows the earlier copy.
+          skip = minWords;
+          while (i + skip < captions.length && j + skip < keys.length && key(captions[i + skip]) === keys[j + skip]) skip++;
+          break;
+        }
+      }
+    }
+    if (skip) i += skip;
+    else {
+      out.push(captions[i]);
+      keys.push(key(captions[i++]));
+    }
+  }
+  return out;
+}
+
 /**
  * Transcribes an already-16kHz-mono WAV file with word-level timestamps.
  * Use `extractAudioSegment` from `./media` to produce a compliant WAV first.
@@ -468,10 +506,12 @@ export async function transcribeWav(
         console.error("[whisper] language detection failed, assuming Hindi/English:", describeError(err));
       }
     }
-    const hinglish = !LANGUAGE_OVERRIDE && language === "hi";
-    const prompt = hinglish ? HINGLISH_PROMPT : null;
+    // Hindi and Marathi both come out in Devanagari; captions want them in
+    // the Latin spelling people type.
+    const hinglish = !LANGUAGE_OVERRIDE && (language === "hi" || language === "mr");
+    const prompt = language === "hi" && !LANGUAGE_OVERRIDE ? HINGLISH_PROMPT : null;
     const words = await transcribeWords(wavPath, language as Language, prompt);
-    const complete = dropRepeats(fill ? await fillGaps(wavPath, words, language as Language, prompt) : words);
+    const complete = dropEchoes(dropFillers(dropRepeats(fill ? await fillGaps(wavPath, words, language as Language, prompt) : words)));
     return hinglish && romanizer ? await romanize(complete, romanizer, reference) : complete;
   } catch (err) {
     throw new WhisperError(`whisper.cpp transcription failed for "${wavPath}": ${describeError(err)}`, err);

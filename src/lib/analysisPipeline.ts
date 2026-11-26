@@ -6,6 +6,7 @@ import { hookToSentence, keepRanges, keptLength, remapCaptions, remapFraming, ty
 import { applyLayout, subtractRanges } from "./clipEdit";
 import { randomUUID } from "crypto";
 import { createLimiter } from "./limit";
+import { autoPickWithClaude } from "./claudePicker";
 import { StageTimer } from "./timing";
 import { processSingleton } from "./processState";
 import { ensureOllama } from "./ollamaHealth";
@@ -170,8 +171,9 @@ export async function makeClips(
   if (analysis?.status !== "ready") return;
   // Gemma picks from the words; with hardly any speech (raw sports, phone
   // footage) it has nothing to go on, so Claude picks by watching instead.
-  if (!hasUsableSpeech(analysis.transcript?.segments ?? [], analysis.videoDurationSeconds)) {
+  if (analysis.picker === "claude" || !hasUsableSpeech(analysis.transcript?.segments ?? [], analysis.videoDurationSeconds)) {
     updateAnalysis(analysisId, { waitingForClaude: true });
+    autoPickWithClaude(analysisId);
     return;
   }
 
@@ -417,7 +419,13 @@ function clampAndDedupe<T extends { startSeconds: number; endSeconds: number; vi
     const length = end - start;
     if (length < minPickSeconds) continue;
     const clampedEnd = fitToMaxLength(start, end, range.maxSeconds, minPickSeconds, segments);
-    const long = reachMinLength(start, clampedEnd, range.minSeconds, durationSeconds, MAX_SETUP_SECONDS);
+    const setup = reachMinLength(start, clampedEnd, range.minSeconds, durationSeconds, MAX_SETUP_SECONDS);
+    // Still short after the lead-in: the user chose this length, so carry
+    // on past the end (snapToSentences then ends it on a full sentence).
+    const long =
+      setup.endSeconds - setup.startSeconds < range.minSeconds
+        ? { ...setup, endSeconds: Math.min(durationSeconds, setup.startSeconds + range.minSeconds + 5) }
+        : setup;
     const snapped = snapToSentences(long.startSeconds, long.endSeconds, range.maxSeconds, segments);
     if (snapped.endSeconds - snapped.startSeconds < shortestClip(range)) continue;
     cleaned.push({ ...clip, ...snapped });
@@ -471,7 +479,9 @@ async function refineEdges<T extends { startSeconds: number; endSeconds: number 
         const endAfter = inside.length ? await checkEnd({ inside, following }) : 0;
         const newEnd =
           endAfter > 0 ? following[endAfter - 1].end : endAfter < 0 ? inside[inside.length - 1 + endAfter].end : endSeconds;
-        if (newEnd > startSeconds + 3 && newEnd - startSeconds <= range.maxSeconds && newEnd < nextStart) {
+        // An earlier end may not take the clip under the chosen length.
+        const longEnough = newEnd >= endSeconds || newEnd - startSeconds >= range.minSeconds - 3;
+        if (longEnough && newEnd > startSeconds + 3 && newEnd - startSeconds <= range.maxSeconds && newEnd < nextStart) {
           endSeconds = newEnd;
           if (endSeconds - startSeconds < range.minSeconds) {
             // Ended early: take a little setup before it, never more after.
@@ -492,7 +502,7 @@ async function refineEdges<T extends { startSeconds: number; endSeconds: number 
         findSilences(sourcePath, endSeconds - 2, endSeconds + 4),
       ]);
       const silences = [...head, ...tail];
-      const snapped = snapToSilence(startSeconds, endSeconds, { ...range, minSeconds: shortestClip(range) }, silences);
+      const snapped = snapToSilence(startSeconds, endSeconds, { ...range, minSeconds: Math.max(1, range.minSeconds - 3) }, silences);
       if (snapped.endSeconds < nextStart) ({ startSeconds, endSeconds } = snapped);
     } catch (err) {
       console.error("[analysisPipeline] silence snap failed, keeping transcript edges:", err);

@@ -115,6 +115,8 @@ export interface Analysis {
   focus?: string;
   /** Too little speech for Gemma to pick from: waits for Claude to watch it over MCP. */
   waitingForClaude?: boolean;
+  /** "claude": the user asked for Claude to pick, whatever the speech. */
+  picker?: "claude";
 }
 
 const analyses = processSingleton("analyses", () => new Map<string, Analysis>());
