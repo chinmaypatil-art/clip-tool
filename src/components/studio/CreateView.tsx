@@ -70,11 +70,15 @@ export function CreateView({ onStarted }: { onStarted: (analysisId: string) => v
       const body = { oneClick: true, ...settings, focus: focus.trim() };
       let res: Response;
       if (file) {
-        const form = new FormData();
-        form.append("file", file);
-        form.append("oneClick", "1");
-        form.append("settings", JSON.stringify(body));
-        res = await fetch("/api/analyses", { method: "POST", body: form });
+        res = await fetch("/api/analyses", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/octet-stream",
+            "X-File-Name": encodeURIComponent(file.name),
+            "X-Settings": encodeURIComponent(JSON.stringify(body)),
+          },
+          body: file,
+        });
       } else {
         res = await fetch("/api/analyses", {
           method: "POST",

@@ -76,6 +76,32 @@ async function startVideo(req: NextRequest) {
     return NextResponse.json({ analysisId: analysis.id });
   }
 
+  // The upload form sends the file as the raw body (any size): it streams
+  // straight to disk instead of being held in memory like form data.
+  if (contentType.includes("application/octet-stream")) {
+    if (!req.body) return NextResponse.json({ error: "No file provided." }, { status: 400 });
+    const name = decodeURIComponent(req.headers.get("x-file-name") ?? "video.mp4");
+    let settings: Record<string, unknown> = {};
+    try {
+      settings = JSON.parse(decodeURIComponent(req.headers.get("x-settings") ?? "{}"));
+    } catch {
+      // Unreadable settings: fall back to the defaults rather than failing the upload.
+    }
+    const analysis = createAnalysis(name, "file");
+    const dir = await ensureAnalysisDir(analysis.id);
+    const uploadPath = path.join(dir, "upload-raw");
+    try {
+      await pipeline(Readable.fromWeb(req.body as NodeReadableStream), createWriteStream(uploadPath));
+    } catch {
+      updateAnalysis(analysis.id, { status: "error", error: "The upload was interrupted. Try again." });
+      return NextResponse.json({ error: "The upload was interrupted. Try again." }, { status: 400 });
+    }
+    applySettings(analysis.id, settings);
+    updateAnalysis(analysis.id, { title: name.replace(/\.[^.]+$/, "") });
+    void makeClips(analysis.id, { kind: "file", path: uploadPath });
+    return NextResponse.json({ analysisId: analysis.id });
+  }
+
   if (contentType.includes("multipart/form-data")) {
     // Refuse oversized uploads before reading them into memory.
     if (Number(req.headers.get("content-length") ?? 0) > MAX_UPLOAD_BYTES + 1024 * 1024) {
