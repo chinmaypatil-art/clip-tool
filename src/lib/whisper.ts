@@ -21,9 +21,10 @@ import { extractAudioSegment } from "./media";
 
 const runFile = promisify(execFile);
 // Every external tool gets a time limit, so a stuck process fails the job
-// instead of holding it (and the render queue) forever.
+// instead of holding it (and the render queue) forever. 4 h, because a 9-hour
+// video is transcribed in one run.
 const execFileAsync = ((file: string, args: readonly string[], opts: object = {}) =>
-  runFile(file, args, { timeout: 60 * 60_000, windowsHide: true, ...opts })) as unknown as typeof runFile;
+  runFile(file, args, { timeout: 4 * 60 * 60_000, windowsHide: true, ...opts })) as unknown as typeof runFile;
 
 export class WhisperError extends Error {
   constructor(message: string, public readonly cause?: unknown) {

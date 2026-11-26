@@ -340,7 +340,7 @@ export async function captureThumbnail(clipPath: string, outJpgPath: string, cli
  * Used by the pipeline to pre-extract each selected clip's short segment
  * before handing it to Remotion, so OffthreadVideo seeks/decodes within a
  * clip-length file instead of repeatedly seeking into the full (often
- * multi-GB) source for every one of the 5 clips.
+ * multi-GB) source for every clip.
  */
 export async function cutClip(
   sourcePath: string,

@@ -30,7 +30,7 @@ import {
   type AnalysisClip,
 } from "./analyses";
 import type { Provider } from "./keystore";
-import { clipLengthRange, type ClipLengthPreset, type ClipLengthRange } from "./clipLength";
+import { clipLengthRange, DEFAULT_CLIP_COUNT, type ClipLengthPreset, type ClipLengthRange } from "./clipLength";
 import type { TranscriptSegment } from "./transcript";
 import { trimTrailingQuestion, fitToMaxLength, snapToSentences, endContext, snapToSilence, reachMinLength } from "./clipTrim";
 
@@ -148,8 +148,6 @@ export async function runTranscriptExtraction(
   }
 }
 
-const TARGET_CLIP_COUNT = 5;
-
 /** The model the one-click flow picks clips with. */
 export const CLIP_PICKER = {
   provider: (process.env.CLIP_PROVIDER ?? "ollama-local") as Provider,
@@ -229,6 +227,7 @@ export async function runModelAgainstAnalysis(
         range: clipLengthRange(clipLength),
         sourcePath: path.join(analysisDir(analysisId), "source.mp4"),
         focus: analysis.focus,
+        count: analysis.clipCount,
       }),
       (ahead) => updateRun(analysisId, run.id, { queueAhead: ahead || undefined })
     );
@@ -264,6 +263,7 @@ export async function pickClips({
   range,
   sourcePath,
   focus,
+  count = DEFAULT_CLIP_COUNT,
 }: {
   provider: Provider;
   model: string;
@@ -273,21 +273,23 @@ export async function pickClips({
   sourcePath: string;
   /** What the user asked for ("funny moments"); local models only. */
   focus?: string;
+  /** How many clips to keep (the user picks 3-10). */
+  count?: number;
 }) {
   // Local models read the transcript a few minutes at a time; cloud models
   // (the benchmark) still get it whole in one call.
   const windowed = await getLocalWindowedPicker(provider, model);
   const result = windowed
     ? {
-        ...(await windowed({ segments, targetCount: TARGET_CLIP_COUNT + SPARE_PICKS, range, focus })),
+        ...(await windowed({ segments, targetCount: count + SPARE_PICKS, range, focus })),
         meta: { keyId: "local", keyLabel: "local (no key)", attempts: 1 },
       }
-    : await runAnalysis(provider, model, segments, TARGET_CLIP_COUNT, range);
+    : await runAnalysis(provider, model, segments, count, range);
   const minPick = windowed ? Math.min(LOCAL_MIN_MOMENT_SECONDS, range.minSeconds * SHORT_TOLERANCE) : range.minSeconds * SHORT_TOLERANCE;
-  const picked = keepBest(clampAndDedupe(result.clips, durationSeconds, range, segments, minPick), TARGET_CLIP_COUNT + SPARE_PICKS);
+  const picked = keepBest(clampAndDedupe(result.clips, durationSeconds, range, segments, minPick), count + SPARE_PICKS);
   const refined = await refineEdges(picked, range, segments, sourcePath, await getLocalEndChecker(provider, model));
   const checked = await rankByCheck(refined, segments, await getLocalClipChecker(provider, model));
-  const final = keepBest(checked, TARGET_CLIP_COUNT);
+  const final = keepBest(checked, count);
   return { ...result, clips: await addHooks(final, segments, await getLocalHookPicker(provider, model)) };
 }
 

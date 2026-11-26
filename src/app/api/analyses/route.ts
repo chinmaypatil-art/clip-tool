@@ -7,7 +7,7 @@ import type { ReadableStream as NodeReadableStream } from "stream/web";
 import { createAnalysis, ensureAnalysisDir, listAnalyses, updateAnalysis } from "@/lib/analyses";
 import { isUrl, isYoutubeUrl } from "@/lib/media";
 import { runTranscriptExtraction, listProviderModels, makeClips } from "@/lib/analysisPipeline";
-import { DEFAULT_CLIP_LENGTH, isClipLengthPreset } from "@/lib/clipLength";
+import { DEFAULT_CLIP_LENGTH, isClipLengthPreset, parseClipCount } from "@/lib/clipLength";
 import { parseCaptionStyle } from "@/lib/captionStyle";
 import { hasRoomForNewVideo } from "@/lib/housekeeping";
 import { hasAccess } from "@/lib/access";
@@ -114,13 +114,14 @@ async function startVideo(req: NextRequest) {
   return NextResponse.json({ error: "Unsupported content type." }, { status: 400 });
 }
 
-function applySettings(id: string, body: { clipLength?: unknown; captions?: unknown; captionStyle?: unknown; focus?: unknown }) {
+function applySettings(id: string, body: { clipLength?: unknown; clipCount?: unknown; captions?: unknown; captionStyle?: unknown; focus?: unknown }) {
   // Goes into the model's prompt: one short line, no quotes to break out of it.
   const focus = typeof body.focus === "string" ? body.focus.replace(/["\s]+/g, " ").trim().slice(0, 120) : "";
   updateAnalysis(id, {
     focus: focus || undefined,
     oneClick: true,
     clipLength: isClipLengthPreset(body.clipLength) ? body.clipLength : DEFAULT_CLIP_LENGTH,
+    clipCount: parseClipCount(body.clipCount),
     captionStyle: body.captions === false ? null : parseCaptionStyle(body.captionStyle),
   });
 }

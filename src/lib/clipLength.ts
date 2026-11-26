@@ -25,3 +25,13 @@ export function clipLengthRange(preset: ClipLengthPreset | undefined): ClipLengt
   const { minSeconds, maxSeconds } = CLIP_LENGTH_PRESETS[preset ?? DEFAULT_CLIP_LENGTH];
   return { minSeconds, maxSeconds };
 }
+
+/** How many clips one video makes; the user picks within these bounds. */
+export const CLIP_COUNT_MIN = 3;
+export const CLIP_COUNT_MAX = 10;
+export const DEFAULT_CLIP_COUNT = 5;
+
+export function parseClipCount(value: unknown): number {
+  const n = Number(value);
+  return Number.isInteger(n) ? Math.min(CLIP_COUNT_MAX, Math.max(CLIP_COUNT_MIN, n)) : DEFAULT_CLIP_COUNT;
+}

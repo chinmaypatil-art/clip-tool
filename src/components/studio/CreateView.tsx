@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { ArrowRight, ChevronDown, Film, Link2, Loader2, Upload, X } from "lucide-react";
-import { CLIP_LENGTH_PRESETS, DEFAULT_CLIP_LENGTH, type ClipLengthPreset } from "@/lib/clipLength";
+import { CLIP_COUNT_MAX, CLIP_COUNT_MIN, CLIP_LENGTH_PRESETS, DEFAULT_CLIP_COUNT, DEFAULT_CLIP_LENGTH, parseClipCount, type ClipLengthPreset } from "@/lib/clipLength";
 import { DEFAULT_CAPTION_STYLE, parseCaptionStyle, type CaptionStyle } from "@/lib/captionStyle";
 import { CaptionStylePicker } from "./CaptionStylePicker";
 import { cn } from "./format";
@@ -12,17 +12,21 @@ const SETTINGS_KEY = "clip-settings";
 
 interface Settings {
   clipLength: ClipLengthPreset;
+  clipCount: number;
   captions: boolean;
   captionStyle: CaptionStyle;
 }
 
+const DEFAULT_SETTINGS: Settings = { clipLength: DEFAULT_CLIP_LENGTH, clipCount: DEFAULT_CLIP_COUNT, captions: true, captionStyle: DEFAULT_CAPTION_STYLE };
+
 function loadSettings(): Settings {
-  const fallback = { clipLength: DEFAULT_CLIP_LENGTH, captions: true, captionStyle: DEFAULT_CAPTION_STYLE };
+  const fallback = DEFAULT_SETTINGS;
   try {
     const raw = JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? "null");
     if (!raw) return fallback;
     return {
       clipLength: raw.clipLength in CLIP_LENGTH_PRESETS ? raw.clipLength : fallback.clipLength,
+      clipCount: parseClipCount(raw.clipCount),
       captions: raw.captions !== false,
       captionStyle: parseCaptionStyle(raw.captionStyle),
     };
@@ -36,7 +40,7 @@ export function CreateView({ onStarted }: { onStarted: (analysisId: string) => v
   const [url, setUrl] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [dragging, setDragging] = useState(false);
-  const [settings, setSettings] = useState<Settings>({ clipLength: DEFAULT_CLIP_LENGTH, captions: true, captionStyle: DEFAULT_CAPTION_STYLE });
+  const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
   const [styleOpen, setStyleOpen] = useState(false);
   // Per video, so not remembered with the other settings.
   const [focus, setFocus] = useState("");
@@ -95,7 +99,7 @@ export function CreateView({ onStarted }: { onStarted: (analysisId: string) => v
     <div className="mx-auto max-w-2xl px-4 pb-24 pt-16 sm:pt-24">
       <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="mb-10 text-center">
         <h1 className="text-3xl font-semibold tracking-tight text-white sm:text-4xl">Turn a podcast into clips</h1>
-        <p className="mt-3 text-sm text-zinc-500">Paste a link or drop a video. You get 5 vertical clips with captions.</p>
+        <p className="mt-3 text-sm text-zinc-500">Paste a link or drop a video. You get {settings.clipCount} vertical clips with captions.</p>
       </motion.div>
 
       <div
@@ -196,6 +200,20 @@ export function CreateView({ onStarted }: { onStarted: (analysisId: string) => v
             ))}
           </div>
         </div>
+        <label className="flex items-center gap-2">
+          <span className="text-zinc-500">Clips</span>
+          <select
+            value={settings.clipCount}
+            onChange={(e) => update({ clipCount: parseClipCount(e.target.value) })}
+            className="rounded-lg bg-white/[0.04] px-2 py-1 text-xs text-white focus:outline-none"
+          >
+            {Array.from({ length: CLIP_COUNT_MAX - CLIP_COUNT_MIN + 1 }, (_, i) => CLIP_COUNT_MIN + i).map((n) => (
+              <option key={n} value={n} className="bg-zinc-900">
+                {n}
+              </option>
+            ))}
+          </select>
+        </label>
         <div className="flex items-center gap-2">
           <span className="text-zinc-500">Captions</span>
           <button

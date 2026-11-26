@@ -107,6 +107,8 @@ export interface Analysis {
   /** Made by the one-click flow (link in, clips out) rather than Compare. */
   oneClick?: boolean;
   clipLength?: ClipLengthPreset;
+  /** How many clips the one-click flow makes (3-10); unset means the default. */
+  clipCount?: number;
   /** Caption look for this video's renders; null renders no captions. */
   captionStyle?: CaptionStyle | null;
   /** What the user asked the picker to look for ("funny moments"). */

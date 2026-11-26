@@ -181,14 +181,15 @@ server.registerTool("make_clips", {
   description: "Start Clipwise on a video link (YouTube or direct URL): download, transcribe, pick clips with Gemma and render them all. Returns an analysisId; poll get_progress until done, then review the clips.",
   inputSchema: {
     url: z.string().url(),
+    clipCount: z.number().int().min(3).max(10).optional().describe("How many clips to make, 3-10 (default 5). More for long videos with many good moments."),
     clipLength: z.string().optional().describe("Clipwise clip length preset; omit for the default"),
     focus: z.string().max(120).optional().describe("What to look for, e.g. 'funny moments'"),
   },
-}, async ({ url, clipLength, focus }) => {
+}, async ({ url, clipCount, clipLength, focus }) => {
   const res = await fetch(`${APP}/api/analyses`, {
     method: "POST",
     headers: { "content-type": "application/json", cookie: await appCookie() },
-    body: JSON.stringify({ url, oneClick: true, clipLength, focus }),
+    body: JSON.stringify({ url, oneClick: true, clipCount, clipLength, focus }),
   }).catch(() => { throw new Error(`Clipwise isn't running at ${APP}. Start it first.`); });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(body.error ?? `Clipwise answered ${res.status}`);
