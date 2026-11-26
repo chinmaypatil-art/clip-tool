@@ -81,31 +81,43 @@ function nvencAvailable(): Promise<boolean> {
 
 const even = (n: number) => Math.max(2, Math.round(n / 2) * 2);
 
-/** Filter chain turning [in] into one WIDTH x HEIGHT shot. */
-function shotFilter(shot: FramingSegment | undefined, srcW: number, srcH: number, input: string, out: string): string {
-  return shotChain(shot, srcW, srcH, input, `${out}r`) + `;[${out}r]setsar=1[${out}]`;
+interface Size { w: number; h: number }
+
+/**
+ * Output size: 1080x1920, or bigger when the source has the detail for it, so
+ * a 4K upload keeps its sharpness (the 9:16 crop of a 3840x2160 frame is
+ * 1216x2160) instead of being shrunk. Never upscaled past what the source holds.
+ */
+export function outputSize(srcW: number, srcH: number): Size {
+  const h = Math.min(3840, Math.max(HEIGHT, Math.min(srcH, (srcW * 16) / 9)));
+  return { w: even((h * 9) / 16), h: even(h) };
 }
 
-function shotChain(shot: FramingSegment | undefined, srcW: number, srcH: number, input: string, out: string): string {
+/** Filter chain turning [in] into one S.w x S.h shot. */
+function shotFilter(S: Size, shot: FramingSegment | undefined, srcW: number, srcH: number, input: string, out: string): string {
+  return shotChain(S, shot, srcW, srcH, input, `${out}r`) + `;[${out}r]setsar=1[${out}]`;
+}
+
+function shotChain(S: Size, shot: FramingSegment | undefined, srcW: number, srcH: number, input: string, out: string): string {
   const aspect = srcW / srcH;
   if (shot?.mode === "split" && shot.people?.length === 2) {
     const a = shot.sourceAspect ?? aspect;
     const halves = shot.people.map((p, k) => {
       // Same geometry as SplitHalf in ClipClassic.tsx.
-      const minWidth = Math.max(WIDTH, HALF_HEIGHT * a);
-      const vw = Math.min(Math.max((SPLIT_FACE_SHARE * WIDTH) / Math.max(p.w, 0.01), minWidth), WIDTH / 0.25);
+      const minWidth = Math.max(S.w, (S.h / 2) * a);
+      const vw = Math.min(Math.max((SPLIT_FACE_SHARE * S.w) / Math.max(p.w, 0.01), minWidth), S.w / 0.25);
       const vh = vw / a;
-      const left = Math.min(0, Math.max(WIDTH - vw, WIDTH / 2 - p.cx * vw));
-      const y = Math.min(0, Math.max(HALF_HEIGHT - vh, HALF_HEIGHT * 0.42 - p.cy * vh));
+      const left = Math.min(0, Math.max(S.w - vw, S.w / 2 - p.cx * vw));
+      const y = Math.min(0, Math.max((S.h / 2) - vh, (S.h / 2) * 0.42 - p.cy * vh));
       const w = even(vw), h = even(vh);
-      const x = Math.min(Math.max(0, Math.round(-left)), w - WIDTH);
-      const yy = Math.min(Math.max(0, Math.round(-y)), h - HALF_HEIGHT);
-      return `[${input}h${k}]scale=${w}:${h},crop=${WIDTH}:${HALF_HEIGHT}:${x}:${yy}[${input}s${k}]`;
+      const x = Math.min(Math.max(0, Math.round(-left)), w - S.w);
+      const yy = Math.min(Math.max(0, Math.round(-y)), h - (S.h / 2));
+      return `[${input}h${k}]scale=${w}:${h},crop=${S.w}:${(S.h / 2)}:${x}:${yy}[${input}s${k}]`;
     });
     return [
       `[${input}]split[${input}h0][${input}h1]`,
       ...halves,
-      `[${input}s0][${input}s1]vstack,drawbox=x=0:y=${HALF_HEIGHT - 3}:w=${WIDTH}:h=6:color=${BACKGROUND}:t=fill[${out}]`,
+      `[${input}s0][${input}s1]vstack,drawbox=x=0:y=${(S.h / 2) - 3}:w=${S.w}:h=6:color=${BACKGROUND}:t=fill[${out}]`,
     ].join(";");
   }
   if (shot?.mode === "wide") {
@@ -113,36 +125,36 @@ function shotChain(shot: FramingSegment | undefined, srcW: number, srcH: number,
     // a blurred, darkened fill of the same shot.
     const side = Math.min(srcW, srcH);
     const x = Math.round(((srcW - side) * shot.focusX) / 100);
-    const cover = Math.max(WIDTH / srcW, HEIGHT / srcH);
+    const cover = Math.max(S.w / srcW, S.h / srcH);
     const bw = even(srcW * cover), bh = even(srcH * cover);
     return [
       `[${input}]split[${input}b][${input}f]`,
-      `[${input}b]scale=${bw}:${bh},crop=${WIDTH}:${HEIGHT},boxblur=24:2,eq=brightness=-0.12[${input}bg]`,
-      `[${input}f]crop=${side}:${side}:${x}:${Math.round((srcH - side) / 2)},scale=${WIDTH}:${WIDTH}[${input}sq]`,
-      `[${input}bg][${input}sq]overlay=0:${(HEIGHT - WIDTH) / 2}[${out}]`,
+      `[${input}b]scale=${bw}:${bh},crop=${S.w}:${S.h},boxblur=24:2,eq=brightness=-0.12[${input}bg]`,
+      `[${input}f]crop=${side}:${side}:${x}:${Math.round((srcH - side) / 2)},scale=${S.w}:${S.w}[${input}sq]`,
+      `[${input}bg][${input}sq]overlay=0:${(S.h - S.w) / 2}[${out}]`,
     ].join(";");
   }
   if (shot?.mode === "fill") {
     // CSS object-fit: cover + object-position: focusX% 50%.
-    const scale = Math.max(WIDTH / srcW, HEIGHT / srcH);
+    const scale = Math.max(S.w / srcW, S.h / srcH);
     const w = even(srcW * scale), h = even(srcH * scale);
-    const x = Math.round(((w - WIDTH) * shot.focusX) / 100);
-    const y = Math.round((h - HEIGHT) / 2);
-    return `[${input}]scale=${w}:${h},crop=${WIDTH}:${HEIGHT}:${x}:${y}[${out}]`;
+    const x = Math.round(((w - S.w) * shot.focusX) / 100);
+    const y = Math.round((h - S.h) / 2);
+    return `[${input}]scale=${w}:${h},crop=${S.w}:${S.h}:${x}:${y}[${out}]`;
   }
   // "fit" (or no analysis): letterbox the whole frame on a dark background.
-  return `[${input}]scale=${WIDTH}:${HEIGHT}:force_original_aspect_ratio=decrease,pad=${WIDTH}:${HEIGHT}:(ow-iw)/2:(oh-ih)/2:color=${BACKGROUND}[${out}]`;
+  return `[${input}]scale=${S.w}:${S.h}:force_original_aspect_ratio=decrease,pad=${S.w}:${S.h}:(ow-iw)/2:(oh-ih)/2:color=${BACKGROUND}[${out}]`;
 }
 
-function videoGraph(framing: FramingSegment[], duration: number, srcW: number, srcH: number): string {
+function videoGraph(S: Size, framing: FramingSegment[], duration: number, srcW: number, srcH: number): string {
   const shots = framing.length ? framing : [undefined];
-  if (shots.length === 1) return `[0:v]fps=${FPS},setsar=1[v0];${shotFilter(shots[0], srcW, srcH, "v0", "vout")}`;
+  if (shots.length === 1) return `[0:v]fps=${FPS},setsar=1[v0];${shotFilter(S, shots[0], srcW, srcH, "v0", "vout")}`;
   const parts = [`[0:v]fps=${FPS},setsar=1,split=${shots.length}${shots.map((_, i) => `[c${i}]`).join("")}`];
   shots.forEach((shot, i) => {
     const from = i === 0 ? 0 : shot!.fromSeconds;
     const to = i === shots.length - 1 ? duration : shots[i + 1]!.fromSeconds;
     parts.push(`[c${i}]trim=${from.toFixed(3)}:${to.toFixed(3)},setpts=PTS-STARTPTS[t${i}]`);
-    parts.push(shotFilter(shot, srcW, srcH, `t${i}`, `o${i}`));
+    parts.push(shotFilter(S, shot, srcW, srcH, `t${i}`, `o${i}`));
   });
   parts.push(`${shots.map((_, i) => `[o${i}]`).join("")}concat=n=${shots.length}:v=1:a=0[vout]`);
   return parts.join(";");
@@ -232,15 +244,16 @@ const filterPath = (p: string) => p.replace(/\\/g, "/").replace(/:/g, "\\:").rep
 
 export async function renderClipFfmpeg(input: FfmpegRenderInput): Promise<void> {
   const { width, height } = await probeVideo(input.segmentPath);
+  const S = outputSize(width, height);
   const assPath = `${input.outputPath}.ass`;
   const graphPath = `${input.outputPath}.filter`;
   const d = input.durationSeconds;
   const captions = input.captionStyle !== null && input.captionPages.length > 0;
   const broll = input.broll ?? [];
   const graph = [
-    videoGraph(input.framing, d, width, height).replace("[vout]", "[bv0]"),
+    videoGraph(S, input.framing, d, width, height).replace("[vout]", "[bv0]"),
     ...broll.flatMap((b, i) => [
-      `[${i + 1}:v]scale=${WIDTH}:${HEIGHT}:force_original_aspect_ratio=increase,crop=${WIDTH}:${HEIGHT},setsar=1,format=yuv420p[br${i}]`,
+      `[${i + 1}:v]scale=${S.w}:${S.h}:force_original_aspect_ratio=increase,crop=${S.w}:${S.h},setsar=1,format=yuv420p[br${i}]`,
       `[bv${i}][br${i}]overlay=0:0:shortest=1:enable='between(t,${b.fromSeconds.toFixed(3)},${b.toSeconds.toFixed(3)})'[bv${i + 1}]`,
     ]),
     `[bv${broll.length}]${captions ? `ass='${filterPath(assPath)}',` : ""}format=yuv420p[vout]`,
