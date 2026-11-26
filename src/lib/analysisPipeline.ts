@@ -32,7 +32,7 @@ import {
 import type { Provider } from "./keystore";
 import { clipLengthRange, DEFAULT_CLIP_COUNT, type ClipLengthPreset, type ClipLengthRange } from "./clipLength";
 import type { TranscriptSegment } from "./transcript";
-import { trimTrailingQuestion, fitToMaxLength, snapToSentences, endContext, snapToSilence, reachMinLength } from "./clipTrim";
+import { trimTrailingQuestion, fitToMaxLength, snapToSentences, endContext, snapToSilence, reachMinLength, includeLeadQuestion } from "./clipTrim";
 
 export class AnalysisPipelineError extends Error {}
 
@@ -322,13 +322,16 @@ export async function pickClips({
   const picked = keepBest(clampAndDedupe(result.clips, durationSeconds, range, segments, minPick), count + SPARE_PICKS);
   const refined = await refineEdges(picked, range, segments, sourcePath, await getLocalEndChecker(provider, model));
   const checked = await rankByCheck(refined, segments, await getLocalClipChecker(provider, model));
-  const final = keepBest(checked, count);
+  const final = keepBest(checked, count).map((c) => ({ ...c, startSeconds: includeLeadQuestion(c.startSeconds, c.endSeconds, segments, range.maxSeconds) }));
   return { ...result, clips: await addHooks(final, segments, await getLocalHookPicker(provider, model)) };
 }
 
 // A cold open shorter than this is a fragment; longer delays the clip itself.
 const HOOK_MIN_SECONDS = 2;
 const HOOK_MAX_SECONDS = 8;
+// In a short clip the teaser is a big share of it and plays as an obvious
+// repeat (reviewers: "the end is again what was in the beginning").
+export const HOOK_MIN_CLIP_SECONDS = 60;
 
 /**
  * Hook-first: the local model names the clip's strongest line, which then
@@ -344,6 +347,10 @@ async function addHooks<T extends { startSeconds: number; endSeconds: number; ti
   if (!pick) return clips;
   const out: Array<T & { hookStartSeconds?: number; hookEndSeconds?: number }> = [];
   for (const clip of clips) {
+    if (clip.endSeconds - clip.startSeconds < HOOK_MIN_CLIP_SECONDS) {
+      out.push(clip);
+      continue;
+    }
     const lines = segments.filter((s) => s.endMs / 1000 > clip.startSeconds + 0.5 && s.startMs / 1000 < clip.endSeconds - 0.5);
     try {
       const n = lines.length > 2 ? await pick(lines) : 0;
@@ -598,7 +605,7 @@ export async function renderAnalysisClip(analysisId: string, runId: string, clip
     // Hook-first: the chosen line plays once, then the clip from its start.
     // Skipped if a reviewer has since moved the edges past it.
     const hook =
-      userEdit.hook !== false && clip.hookStartSeconds !== undefined && clip.hookEndSeconds !== undefined &&
+      userEdit.hook !== false && endSeconds - startSeconds >= HOOK_MIN_CLIP_SECONDS && clip.hookStartSeconds !== undefined && clip.hookEndSeconds !== undefined &&
       clip.hookStartSeconds >= startSeconds && clip.hookEndSeconds <= endSeconds
         ? hookToSentence(captions, [Math.max(0, clip.hookStartSeconds - startSeconds - 0.05), clip.hookEndSeconds - startSeconds + 0.15], clipLength)
         : null;

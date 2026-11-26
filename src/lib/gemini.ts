@@ -391,6 +391,7 @@ Select the best ${targetCount} clips overall. Prioritize:
 - Highest genuine viral/hook potential (not just highest model score — use your own judgment).
 - No two selected clips should overlap in time.
 - Each clip must be between ${range.minSeconds} and ${range.maxSeconds} seconds long (the user's choice). You may tighten or extend a candidate's start/end to land in that range, as long as it still starts and ends on a complete thought.
+- In an interview or Q&A, start the clip ON the question, never on the answer, and end once the answer lands, before the next question.
 - Prefer variety (different topics/moments) over picking several near-duplicate moments from the same stretch of video.
 - If fewer than ${targetCount} candidates are actually good, return fewer rather than padding with weak picks.
 

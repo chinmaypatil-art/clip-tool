@@ -4,6 +4,27 @@ import type { TranscriptSegment } from "./transcript";
 const END_PAD_SECONDS = 0.4;
 
 /**
+ * A clip that opens on an answer ("Oh, I'd say an egg") makes no sense
+ * without the question just before it. If the line right before the clip
+ * (within 15 s) is a question, start the clip there, as long as the clip
+ * still fits `maxSeconds`.
+ */
+export function includeLeadQuestion(
+  startSeconds: number,
+  endSeconds: number,
+  segments: TranscriptSegment[] | undefined,
+  maxSeconds: number
+): number {
+  if (!segments?.length) return startSeconds;
+  const before = segments.filter((s) => s.startMs / 1000 < startSeconds - 0.5);
+  const prev = before[before.length - 1];
+  if (!prev || !prev.text.trim().endsWith("?")) return startSeconds;
+  const from = prev.startMs / 1000;
+  if (startSeconds - from > 15 || endSeconds - from > maxSeconds) return startSeconds;
+  return from;
+}
+
+/**
  * Models stretch clips to hit the length range by tacking on the next line,
  * which is usually the interviewer opening a new topic ("So tell me…?").
  * If the clip's final line is a question that begins after the clip's first
