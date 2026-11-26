@@ -99,7 +99,7 @@ export function CreateView({ onStarted }: { onStarted: (analysisId: string) => v
     <div className="mx-auto max-w-2xl px-4 pb-24 pt-16 sm:pt-24">
       <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="mb-10 text-center">
         <h1 className="text-3xl font-semibold tracking-tight text-white sm:text-4xl">Turn a podcast into clips</h1>
-        <p className="mt-3 text-sm text-zinc-500">Paste a link or drop a video. You get {settings.clipCount} vertical clips with captions.</p>
+        <p className="mt-3 text-sm text-zinc-500">Paste a link or drop a video. You get {settings.clipCount} picks with hooks; render the ones you like.</p>
       </motion.div>
 
       <div

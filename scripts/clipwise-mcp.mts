@@ -1,32 +1,35 @@
-// Clipwise MCP server: lets Claude (or any MCP client) look at rendered clips
-// and leave reviews. Run by the client: node scripts/clipwise-mcp.mts
-// Reads storage/ directly, so the Clipwise app does not need to be running.
-// AI reviews go to storage/training/ai-reviews.jsonl, never into analysis.json,
-// so they can't clash with the app's own writes or mix with human labels.
+// Clipwise MCP server. Claude (or any MCP client) can start a video, pick
+// clips itself by watching it (frame grids + loudness; for footage with no
+// useful transcript), and review rendered clips. Run by the client:
+// node scripts/clipwise-mcp.mts. New videos and picked clips go through the
+// Clipwise app's API; looking at videos reads storage/ directly. AI reviews go
+// to storage/training/ai-reviews.jsonl, never into analysis.json.
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { existsSync } from "node:fs";
-import { appendFile, mkdir, mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import { appendFile, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { getFfmpegPath } from "../src/lib/binaries.ts";
 import { REJECT_REASONS, GOOD_REASONS } from "../src/lib/review.ts";
+import { createLimiter } from "../src/lib/limit.ts";
 
 const run = promisify(execFile);
 const ROOT = path.resolve(import.meta.dirname, "..");
 const ANALYSES = path.join(ROOT, "storage", "analyses");
 const AI_REVIEWS = path.join(ROOT, "storage", "training", "ai-reviews.jsonl");
 const RUBRIC = await readFile(path.join(import.meta.dirname, "clip-review-rubric.md"), "utf8");
+const PICK_GUIDE = await readFile(path.join(import.meta.dirname, "clip-pick-guide.md"), "utf8");
 
 interface Clip {
   id: string; title: string; hook?: string; description?: string; reasoning?: string;
-  startSeconds: number; endSeconds: number; renderStatus: string; renderError?: string; renderFilename?: string; review?: { verdict: string; reasons: string[]; note: string };
+  startSeconds: number; endSeconds: number; renderStatus: string; renderQueuedAt?: number; renderError?: string; renderFilename?: string; review?: { verdict: string; reasons: string[]; note: string };
 }
 interface Analysis {
-  id: string; createdAt: number; status: string; error: string | null; title?: string; sourceLabel: string; archived?: boolean; focus?: string; videoDurationSeconds: number | null;
+  id: string; createdAt: number; oneClick?: boolean; status: string; error: string | null; title?: string; sourceLabel: string; archived?: boolean; focus?: string; videoDurationSeconds: number | null;
   transcript: { segments: { startMs: number; endMs: number; text: string }[] } | null;
   runs: { id: string; provider: string; model: string; status: string; error: string | null; clips: Clip[] }[];
 }
@@ -103,7 +106,7 @@ const fmt = (s: number) => `${Math.floor(s / 60)}:${(s % 60).toFixed(1).padStart
 
 const server = new McpServer(
   { name: "clipwise", version: "0.1.0" },
-  { instructions: `Clipwise clip reviewer. Workflow: make_clips(url) -> get_progress until DONE -> list_clips -> get_clip_pack -> submit_review for each clip. Your reviews never replace the human's; they are stored separately. Be efficient: get_progress waits by itself, so call it, not a polling loop; fetch each clip pack once and submit right after judging it; keep notes to one line. Judge every clip with this rubric:\n\n${RUBRIC}` }
+  { instructions: `Clipwise makes short vertical clips from long videos. Two pickers:\n- gemma: make_clips(url, picker 'gemma') -> get_progress until DONE. Clipwise picks from the transcript.\n- claude (you watch it; for no speech or a useless transcript): make_clips(url, picker 'claude') -> get_progress until READY TO WATCH -> get_loud_moments + get_timeline -> submit_clips. The user renders the picks they like.\nOptional afterwards: review rendered clips with list_clips -> get_clip_pack -> submit_review. Reviews never replace the human's.\nBe efficient: get_progress waits by itself, so never poll in a loop; don't fetch the same stretch or clip pack twice; keep notes to one line.\n\nHOW TO PICK:\n${PICK_GUIDE}\n\nHOW TO REVIEW:\n${RUBRIC}` }
 );
 
 server.registerTool("list_clips", {
@@ -178,22 +181,135 @@ async function appCookie(): Promise<string> {
 }
 
 server.registerTool("make_clips", {
-  description: "Start Clipwise on a video link (YouTube or direct URL): download, transcribe, pick clips with Gemma and render them all. Returns an analysisId; poll get_progress until done, then review the clips.",
+  description: "Start Clipwise on a video link (YouTube or direct URL). picker 'gemma' (default): Clipwise downloads, transcribes, picks clips from the transcript with Gemma. picker 'claude': Clipwise only downloads and transcribes (if there is speech); then YOU watch it with get_loud_moments / get_timeline and choose clips with submit_clips. Use 'claude' for footage with no speech or a useless transcript (sports, raw phone video, gaming). Returns an analysisId; then call get_progress.",
   inputSchema: {
     url: z.string().url(),
+    picker: z.enum(["gemma", "claude"]).default("gemma"),
     clipCount: z.number().int().min(3).max(10).optional().describe("How many clips to make, 3-10 (default 5). More for long videos with many good moments."),
     clipLength: z.string().optional().describe("Clip length: \"shorts\" (10-60 s), \"short\" (1-2 min, default), \"medium\" (2-3 min) or \"long\" (3-4 min)"),
     focus: z.string().max(120).optional().describe("What to look for, e.g. 'funny moments'"),
   },
-}, async ({ url, clipCount, clipLength, focus }) => {
-  const res = await fetch(`${APP}/api/analyses`, {
+}, async ({ url, picker, clipCount, clipLength, focus }) => {
+  const body = await callApp("/api/analyses", { url, oneClick: picker === "gemma", clipCount, clipLength, focus });
+  return { content: [txt(`Started (${picker} picks). analysisId=${body.analysisId}. Call get_progress; it waits by itself.`)] };
+});
+
+async function callApp(route: string, payload: object): Promise<Record<string, unknown>> {
+  const res = await fetch(`${APP}${route}`, {
     method: "POST",
     headers: { "content-type": "application/json", cookie: await appCookie() },
-    body: JSON.stringify({ url, oneClick: true, clipCount, clipLength, focus }),
+    body: JSON.stringify(payload),
   }).catch(() => { throw new Error(`Clipwise isn't running at ${APP}. Start it first.`); });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(body.error ?? `Clipwise answered ${res.status}`);
-  return { content: [txt(`Started. analysisId=${body.analysisId}. This takes several minutes; call get_progress every minute or two.`)] };
+  return body;
+}
+
+const hms = (s: number) => `${Math.floor(s / 3600)}h${String(Math.floor((s % 3600) / 60)).padStart(2, "0")}m${String(Math.floor(s % 60)).padStart(2, "0")}s`;
+const sourceOf = (a: Analysis) => {
+  const src = path.join(ANALYSES, a.id, "source.mp4");
+  if (!existsSync(src)) throw new Error("The source video isn't on disk (still downloading, or deleted).");
+  return src;
+};
+
+/** Loudness (dB RMS) for every second of the video, measured once and cached next to it. */
+async function loudness(a: Analysis): Promise<number[]> {
+  const dir = path.join(ANALYSES, a.id);
+  const cache = path.join(dir, "loudness.json");
+  const cached = await readFile(cache, "utf8").catch(() => "");
+  if (cached) return JSON.parse(cached);
+  // file= is relative to cwd: a Windows drive colon would break the filter syntax.
+  await run(getFfmpegPath(), ["-v", "error", "-i", sourceOf(a), "-vn", "-af",
+    "aresample=8000,asetnsamples=n=8000,astats=metadata=1:reset=1,ametadata=mode=print:key=lavfi.astats.Overall.RMS_level:file=loudness.txt",
+    "-f", "null", "-"], { cwd: dir, timeout: 30 * 60_000 });
+  const raw = await readFile(path.join(dir, "loudness.txt"), "utf8");
+  const db = [...raw.matchAll(/RMS_level=(\S+)/g)].map((m) => Math.max(-90, Number(m[1]) || -90));
+  await writeFile(cache, JSON.stringify(db.map((d) => Math.round(d * 10) / 10)));
+  await rm(path.join(dir, "loudness.txt"), { force: true });
+  return db;
+}
+
+/** Seconds that are much louder than the two minutes around them (cheers, shouts, commentary spikes). */
+function loudMoments(db: number[], top: number) {
+  const scored = db.map((d, i) => {
+    const near = db.slice(Math.max(0, i - 60), i + 60).toSorted((x, y) => x - y);
+    return { t: i, jump: d - near[Math.floor(near.length / 2)] };
+  });
+  const picked: { t: number; jump: number }[] = [];
+  for (const s of scored.toSorted((x, y) => y.jump - x.jump)) {
+    if (picked.length >= top || s.jump < 3) break;
+    if (picked.every((p) => Math.abs(p.t - s.t) > 30)) picked.push(s);
+  }
+  return picked.toSorted((x, y) => x.t - y.t);
+}
+
+server.registerTool("get_loud_moments", {
+  description: "For picker 'claude': the moments where the sound jumps well above its surroundings (crowd, shouting, excited commentary), across the whole video. A cheap map of where things happen; check each with get_timeline. The first call on a long video takes a few minutes (it measures the audio once).",
+  inputSchema: { analysisId: z.string(), top: z.number().int().min(5).max(80).default(40) },
+}, async ({ analysisId, top }) => {
+  const a = await load(analysisId);
+  const db = await loudness(a);
+  const lines = loudMoments(db, top).map((m) => `${hms(m.t)} (${m.t}s) +${m.jump.toFixed(1)} dB`);
+  return { content: [txt(`Video length ${hms(db.length)}. Loudest jumps over the surrounding 2 minutes, in time order:\n${lines.join("\n") || "none (flat audio)"}`)] };
+});
+
+server.registerTool("get_timeline", {
+  description: "For picker 'claude': look at a stretch of the source video. Returns grids of 36 frames each (6x6, left to right, top to bottom), every frame stamped with its time, plus any transcript lines in that stretch. Start wide (whole video, a few sheets) to find where things happen, then zoom into short stretches (1-3 min) to set exact start and end seconds.",
+  inputSchema: {
+    analysisId: z.string(),
+    fromSeconds: z.number().min(0).default(0),
+    toSeconds: z.number().optional().describe("Default: end of video"),
+    sheets: z.number().int().min(1).max(4).default(1).describe("Grids to return; frames are spread evenly over the stretch"),
+  },
+}, async ({ analysisId, fromSeconds, toSeconds, sheets }) => {
+  const a = await load(analysisId);
+  const src = sourceOf(a);
+  const end = Math.min(toSeconds ?? Infinity, a.videoDurationSeconds ?? (await duration(src)));
+  if (end - fromSeconds < 2) throw new Error("Stretch too short.");
+  const n = sheets * 36;
+  const times = Array.from({ length: n }, (_, i) => fromSeconds + ((i + 0.5) * (end - fromSeconds)) / n);
+  const dir = await mkdtemp(path.join(os.tmpdir(), "clipwise-mcp-"));
+  try {
+    const font = "fontfile='C\\:/Windows/Fonts/arialbd.ttf'";
+    const grab = createLimiter(6);
+    await Promise.all(times.map((t, i) => grab(() => run(getFfmpegPath(), ["-v", "error", "-ss", t.toFixed(2), "-i", src, "-frames:v", "1", "-vf",
+      `scale=320:-2,drawtext=${font}:text='${hms(t)}':x=4:y=4:fontsize=18:fontcolor=yellow:box=1:boxcolor=black@0.6`,
+      "-q:v", "4", path.join(dir, `f${String(i).padStart(3, "0")}.jpg`)]))));
+    const images = [];
+    for (let s = 0; s < sheets; s++) {
+      const out = path.join(dir, `sheet${s}.jpg`);
+      await run(getFfmpegPath(), ["-v", "error", "-start_number", String(s * 36), "-i", path.join(dir, "f%03d.jpg"), "-frames:v", "1", "-vf", "tile=6x6", "-q:v", "4", out]);
+      images.push(img((await readFile(out)).toString("base64")));
+    }
+    const lines = transcriptBetween(a, fromSeconds, end).split("\n").filter(Boolean);
+    const said = lines.length ? `Transcript here (${lines.length} lines${lines.length > 80 ? ", first 80" : ""}):\n${lines.slice(0, 80).join("\n")}` : "No transcript in this stretch.";
+    return { content: [txt(`${hms(fromSeconds)} to ${hms(end)}, a frame every ${((end - fromSeconds) / n).toFixed(1)} s.\n${said}`), ...images] };
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+server.registerTool("submit_clips", {
+  description: "For picker 'claude': the clips you chose. Clipwise saves them as picks; the user then renders the ones they like in the app. Times are source-video seconds.",
+  inputSchema: {
+    analysisId: z.string(),
+    picker: z.string().describe("Your model id, e.g. 'claude-opus-5-5'"),
+    clips: z.array(z.object({
+      startSeconds: z.number().describe("Start of the build-up, not the action itself"),
+      endSeconds: z.number().describe("After the reaction / payoff ends"),
+      title: z.string(),
+      hook: z.string().describe("On-screen hook text or the line that opens the clip"),
+      description: z.string().describe("What happens, as seen in the frames"),
+      reasoning: z.string().describe("Why this moment works as a short"),
+      viralScore: z.number().min(0).max(100),
+      category: z.string().optional(),
+      hookStartSeconds: z.number().optional().describe("Optional hook-first: 1-8 s inside the clip to play first as a teaser"),
+      hookEndSeconds: z.number().optional(),
+    })).min(1).max(10),
+  },
+}, async ({ analysisId, picker, clips }) => {
+  const body = await callApp(`/api/analyses/${encodeURIComponent(analysisId)}/runs`, { picker, clips });
+  return { content: [txt(`Saved ${clips.length} clips (run ${body.runId}). They show in Clipwise with their hooks; the user renders the ones they want.`)] };
 });
 
 server.registerTool("get_progress", {
@@ -214,13 +330,18 @@ async function progress(analysisId: string): Promise<{ text: string; final: bool
   if (a.status === "error") return { text: `Failed: ${a.error}`, final: true };
   if (a.status === "extracting_transcript") return { text: "Downloading and transcribing.", final: false };
   const r = a.runs.at(-1);
+  if (!r && !a.oneClick) {
+    const lines = a.transcript?.segments.length ?? 0;
+    return { text: `READY TO WATCH (${hms(a.videoDurationSeconds ?? 0)} long, ${lines ? `${lines} transcript lines` : "no transcript"}). Pick clips: get_loud_moments, get_timeline, then submit_clips.`, final: true };
+  }
   if (!r || r.status === "queued" || r.status === "running") return { text: "Gemma is picking clips.", final: false };
   if (r.status === "error") return { text: `Picking failed: ${r.error}`, final: true };
   const done = r.clips.filter((c) => c.renderStatus === "done").length;
   const failed = r.clips.filter((c) => c.renderStatus === "error");
-  const final = done + failed.length === r.clips.length;
-  const text = `${done} of ${r.clips.length} clips rendered${failed.length ? `, ${failed.length} failed (${failed[0].renderError})` : ""}.`;
-  return { text: final ? `DONE: ${text} Review them with list_clips(analysisId) / get_clip_pack.` : text, final };
+  // Nothing renders by itself: the user renders the picks they like in the app.
+  const busy = r.clips.some((c) => c.renderStatus === "rendering" || (c.renderStatus === "pending" && c.renderQueuedAt));
+  const text = `${r.clips.length} clips picked, ${done} rendered${failed.length ? `, ${failed.length} failed (${failed[0].renderError})` : ""}.`;
+  return { text: busy ? text : `DONE: ${text} The user chooses which to render in Clipwise; rendered ones can be reviewed with list_clips / get_clip_pack.`, final: !busy };
 }
 
 const reasonKeys =[...Object.keys(REJECT_REASONS), ...Object.keys(GOOD_REASONS)] as [string, ...string[]];

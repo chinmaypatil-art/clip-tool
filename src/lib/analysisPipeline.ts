@@ -16,7 +16,7 @@ import { transcribeWav, WhisperError } from "./whisper";
 import { bundleForJob, renderClip, RenderError } from "./render";
 import { analyzeFraming } from "./framing";
 import { runAnalysis, listAllProviders, getLocalRomanizer, getLocalEndChecker, getLocalWindowedPicker, getLocalClipChecker, getLocalHookPicker } from "./providers/registry";
-import { ANALYSIS_PROMPT_VERSION, ProviderError, type ClipChecker, type EndChecker, type HookPicker } from "./providers/types";
+import { ANALYSIS_PROMPT_VERSION, ProviderError, type ClipChecker, type EndChecker, type HookPicker, type NormalizedClip } from "./providers/types";
 import {
   ensureAnalysisDir,
   analysisDir,
@@ -155,9 +155,8 @@ export const CLIP_PICKER = {
 };
 
 /**
- * The one-click flow: video in, rendered clips out. Transcript, then the
- * local model picks clips, then every clip renders. Two clips are in flight at
- * once, so one clip's captions are made while the other renders.
+ * The one-click flow: video in, picked clips out. Transcript, then the local
+ * model picks clips; the user renders the ones they want.
  */
 export async function makeClips(
   analysisId: string,
@@ -170,15 +169,35 @@ export async function makeClips(
   const analysis = getAnalysis(analysisId);
   if (analysis?.status !== "ready") return;
 
+  // Nothing renders by itself: the user sees the picks and hooks first and
+  // renders only the ones they want.
   await runModelAgainstAnalysis(analysisId, CLIP_PICKER.provider, CLIP_PICKER.model, analysis.clipLength);
-  const run = getAnalysis(analysisId)?.runs.at(-1);
-  if (run?.status !== "done") return;
+}
 
-  // One at a time: two in parallel fought over the CPU (framing 4.5 s -> 32 s,
-  // whisper 6 s -> 33 s) and took longer than back to back, and the first
-  // clip arrives in about a minute instead of after several.
-  const inFlight = createLimiter(1);
-  await Promise.all(run.clips.map((clip) => inFlight(() => renderAnalysisClip(analysisId, run.id, clip.id))));
+/**
+ * Clips an outside picker chose by watching the video (Claude over MCP, for
+ * footage with no useful transcript). Saved as a finished run; like the
+ * one-click flow, the user chooses which ones to render.
+ */
+export function addPickedClips(analysisId: string, picker: string, picked: NormalizedClip[]): string {
+  const run: ModelRun = {
+    id: randomUUID(),
+    provider: "mcp",
+    model: picker,
+    status: "done",
+    startedAt: Date.now(),
+    finishedAt: Date.now(),
+    durationMs: 0,
+    tokenUsage: null,
+    keyLabel: null,
+    attempts: null,
+    error: null,
+    promptVersion: "mcp-vision-1",
+    clips: picked.map((c): AnalysisClip => ({ ...c, id: randomUUID(), renderStatus: "pending" })),
+    rawResponse: picked,
+  };
+  addRun(analysisId, run);
+  return run.id;
 }
 
 /** Runs one provider/model against an analysis's already-extracted transcript. */
