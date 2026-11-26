@@ -5,7 +5,7 @@ import { Readable } from "stream";
 import { pipeline } from "stream/promises";
 import type { ReadableStream as NodeReadableStream } from "stream/web";
 import { createAnalysis, ensureAnalysisDir, listAnalyses, updateAnalysis } from "@/lib/analyses";
-import { isUrl, isYoutubeUrl } from "@/lib/media";
+import { isUrl, isYoutubeUrl, probeVideo } from "@/lib/media";
 import { runTranscriptExtraction, listProviderModels, makeClips } from "@/lib/analysisPipeline";
 import { DEFAULT_CLIP_LENGTH, isClipLengthPreset, parseClipCount } from "@/lib/clipLength";
 import { parseCaptionStyle } from "@/lib/captionStyle";
@@ -92,9 +92,14 @@ async function startVideo(req: NextRequest) {
     const uploadPath = path.join(dir, "upload-raw");
     try {
       await pipeline(Readable.fromWeb(req.body as NodeReadableStream), createWriteStream(uploadPath));
-    } catch {
-      updateAnalysis(analysis.id, { status: "error", error: "The upload was interrupted. Try again." });
-      return NextResponse.json({ error: "The upload was interrupted. Try again." }, { status: 400 });
+    } catch (err) {
+      // The connection can drop right after the last byte (a 10.8 GB upload
+      // arrived whole yet ended in an error): keep the file if it plays.
+      console.error("[upload] stream ended with an error:", err);
+      if (!(await probeVideo(uploadPath).then(() => true, () => false))) {
+        updateAnalysis(analysis.id, { status: "error", error: "The upload was interrupted. Try again." });
+        return NextResponse.json({ error: "The upload was interrupted. Try again." }, { status: 400 });
+      }
     }
     applySettings(analysis.id, settings);
     updateAnalysis(analysis.id, { title: name.replace(/\.[^.]+$/, "") });
