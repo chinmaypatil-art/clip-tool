@@ -3,6 +3,7 @@
  * the pipeline (server), so keep this file free of Node-only imports.
  */
 export const CLIP_LENGTH_PRESETS = {
+  shorts: { label: "10-60 sec", minSeconds: 10, maxSeconds: 60 },
   short: { label: "1-2 min", minSeconds: 60, maxSeconds: 120 },
   medium: { label: "2-3 min", minSeconds: 120, maxSeconds: 180 },
   long: { label: "3-4 min", minSeconds: 180, maxSeconds: 240 },

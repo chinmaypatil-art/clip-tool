@@ -182,7 +182,7 @@ server.registerTool("make_clips", {
   inputSchema: {
     url: z.string().url(),
     clipCount: z.number().int().min(3).max(10).optional().describe("How many clips to make, 3-10 (default 5). More for long videos with many good moments."),
-    clipLength: z.string().optional().describe("Clipwise clip length preset; omit for the default"),
+    clipLength: z.string().optional().describe("Clip length: \"shorts\" (10-60 s), \"short\" (1-2 min, default), \"medium\" (2-3 min) or \"long\" (3-4 min)"),
     focus: z.string().max(120).optional().describe("What to look for, e.g. 'funny moments'"),
   },
 }, async ({ url, clipCount, clipLength, focus }) => {
