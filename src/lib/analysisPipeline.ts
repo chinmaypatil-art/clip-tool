@@ -126,8 +126,10 @@ export async function runTranscriptExtraction(
     const wavPath = path.join(dir, "full-audio.wav");
     await extractAudioSegment(sourcePath, wavPath, 0, probe.durationSeconds);
     // Only models read this transcript, and they read Devanagari fine — no romanization needed.
+    // No gap re-checks either: each gap costs ~35 s (a 66-min video spent 30+ min
+    // on them), and every picked clip is re-transcribed with them anyway.
     const captions = await gpuSlot(
-      () => transcribeWav(wavPath, { romanizer: null }),
+      () => transcribeWav(wavPath, { romanizer: null, fillGaps: false }),
       (ahead) => updateAnalysis(analysisId, { queueAhead: ahead || undefined })
     );
     const segments = captionsToSegments(captions);

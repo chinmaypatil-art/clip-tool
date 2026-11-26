@@ -451,7 +451,11 @@ export function dropRepeats(captions: Caption[]): Caption[] {
  */
 export async function transcribeWav(
   wavPath: string,
-  { romanizer = romanizeHinglishWords, reference }: { romanizer?: Romanizer | null; reference?: string } = {}
+  {
+    romanizer = romanizeHinglishWords,
+    reference,
+    fillGaps: fill = true,
+  }: { romanizer?: Romanizer | null; reference?: string; fillGaps?: boolean } = {}
 ): Promise<Caption[]> {
   try {
     let language = LANGUAGE_OVERRIDE ?? "hi";
@@ -466,7 +470,7 @@ export async function transcribeWav(
     const hinglish = !LANGUAGE_OVERRIDE && language === "hi";
     const prompt = hinglish ? HINGLISH_PROMPT : null;
     const words = await transcribeWords(wavPath, language as Language, prompt);
-    const complete = dropRepeats(await fillGaps(wavPath, words, language as Language, prompt));
+    const complete = dropRepeats(fill ? await fillGaps(wavPath, words, language as Language, prompt) : words);
     return hinglish && romanizer ? await romanize(complete, romanizer, reference) : complete;
   } catch (err) {
     throw new WhisperError(`whisper.cpp transcription failed for "${wavPath}": ${describeError(err)}`, err);
