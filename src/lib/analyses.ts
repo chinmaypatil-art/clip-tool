@@ -174,7 +174,9 @@ export async function loadAnalysis(id: string): Promise<Analysis | undefined> {
       interrupted = true;
     }
     analyses.set(id, analysis);
-    if (interrupted) persist(analysis);
+    // `next build` loads these files too (prerendering): it must never write
+    // the live server's running jobs back to disk as stopped.
+    if (interrupted && process.env.CLIPWISE_SERVER === "1") persist(analysis);
     return analysis;
   } catch {
     return undefined;

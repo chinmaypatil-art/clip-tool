@@ -9,7 +9,11 @@ const CHECK_EVERY_MS = 30_000;
  * one refresh.
  */
 export async function register() {
-  if (process.env.NEXT_RUNTIME !== "nodejs" || process.env.NODE_ENV !== "production") return;
+  if (process.env.NEXT_RUNTIME !== "nodejs") return;
+  // Marks this process as the real server (next start/dev; `next build` never
+  // calls register): only it may mark leftover jobs as stopped (lib/analyses).
+  process.env.CLIPWISE_SERVER = "1";
+  if (process.env.NODE_ENV !== "production") return;
   const { readFile } = await import("fs/promises");
   const path = await import("path");
   const { listAnalyses } = await import("./lib/analyses");
