@@ -8,10 +8,14 @@ import { CLIP_LENGTH_PRESETS } from "@/lib/clipLength";
 import { ClipTile } from "./ClipTile";
 import { clock, cn, when } from "./format";
 
-/** The run whose clips we show: the local model's latest finished run, else the latest run. */
+/**
+ * The run whose clips we show: Claude's picks if someone asked Claude to pick
+ * this video, else the local model's latest finished run, else the latest run.
+ */
 export function mainRun(analysis: Pick<Analysis, "runs">): ModelRun | undefined {
   const runs = [...analysis.runs].reverse();
   return (
+    runs.find((r) => r.provider === "mcp" && r.status === "done") ??
     runs.find((r) => r.provider === "ollama-local" && r.status === "done") ??
     runs.find((r) => r.status === "done") ??
     runs.find((r) => r.status === "running") ??
