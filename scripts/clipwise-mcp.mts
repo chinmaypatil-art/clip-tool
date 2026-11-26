@@ -272,7 +272,8 @@ server.registerTool("get_timeline", {
 }, async ({ analysisId, fromSeconds, toSeconds, sheets }) => {
   const a = await load(analysisId);
   const src = sourceOf(a);
-  const end = Math.min(toSeconds ?? Infinity, a.videoDurationSeconds ?? (await duration(src)));
+  // The file itself, not the stored length: a retried upload can leave that stale.
+  const end = Math.min(toSeconds ?? Infinity, await duration(src));
   if (end - fromSeconds < 2) throw new Error("Stretch too short.");
   const n = sheets * 36;
   const times = Array.from({ length: n }, (_, i) => fromSeconds + ((i + 0.5) * (end - fromSeconds)) / n);
