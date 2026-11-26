@@ -336,6 +336,11 @@ export async function captureThumbnail(clipPath: string, outJpgPath: string, cli
   }
 }
 
+// Hide-area boxes: one starting this close to the top or bottom edge, no taller
+// than MAX_EDGE_CROP, is cropped away; others are blurred.
+const EDGE = 0.03;
+const MAX_EDGE_CROP = 0.12;
+
 /**
  * Cuts [startSeconds, endSeconds) from the source video into a standalone,
  * re-encoded mp4 at outPath. Re-encoding (rather than stream-copy) guarantees
@@ -353,14 +358,19 @@ export async function cutClip(
   endSeconds: number,
   /** Pieces to keep, in seconds from startSeconds (see tighten.ts); omitted keeps it all. */
   keep?: Array<[number, number]>,
-  /** Boxes to blur out (fractions of the frame), e.g. a stream's logo or subscriber counter. */
-  hide: Array<{ x: number; y: number; w: number; h: number }> = []
+  /** Boxes to hide (fractions of the frame), e.g. a stream's logo or subscriber counter. */
+  hideAreas: Array<{ x: number; y: number; w: number; h: number }> = []
 ): Promise<void> {
   const ffmpeg = getFfmpegPath();
   const duration = Math.max(0.1, endSeconds - startSeconds);
-  // Each box: a heavily blurred copy of that patch laid back over it.
+  // A thin box on the top or bottom edge is cut off (a slight zoom, no trace);
+  // any other box is blurred.
+  const top = Math.max(0, ...hideAreas.filter((b) => b.y <= EDGE && b.y + b.h <= MAX_EDGE_CROP).map((b) => b.y + b.h));
+  const bottom = Math.max(0, ...hideAreas.filter((b) => b.y + b.h >= 1 - EDGE && b.h <= MAX_EDGE_CROP).map((b) => 1 - b.y));
+  const hide = hideAreas.filter((b) => !(b.y <= EDGE && b.y + b.h <= MAX_EDGE_CROP) && !(b.y + b.h >= 1 - EDGE && b.h <= MAX_EDGE_CROP));
+  // Each blurred box: a heavily blurred copy of that patch laid back over it.
   const px = (v: number) => `trunc(${v.toFixed(4)}*%s/2)*2`;
-  const hideGraph = hide
+  const blurGraph = hide
     .map((b, i) => {
       const from = i === 0 ? "[0:v]" : `[h${i}]`;
       const crop = `crop=${px(b.w).replace("%s", "iw")}:${px(b.h).replace("%s", "ih")}:${px(b.x).replace("%s", "iw")}:${px(b.y).replace("%s", "ih")}`;
@@ -368,24 +378,28 @@ export async function cutClip(
         `[m${i}][b${i}]overlay=${px(b.x).replace("%s", "W")}:${px(b.y).replace("%s", "H")}[h${i + 1}];`;
     })
     .join("");
-  const video = hide.length ? `[h${hide.length}]` : "[0:v]";
+  const blurred = hide.length ? `[h${hide.length}]` : "[0:v]";
+  const cropped = top + bottom > 0;
+  const hideGraph = blurGraph + (cropped ? `${blurred}crop=iw:${px(1 - top - bottom).replace("%s", "ih")}:0:${px(top).replace("%s", "ih")}[hc];` : "");
+  const video = cropped ? "[hc]" : blurred;
+  const anyHidden = hide.length > 0 || cropped;
   // A 15 ms fade on each side of every cut so joins don't click.
   const pieces = keep && keep.length > 1 ? keep : null;
   const joins = pieces
     ? [
           "-filter_complex",
           hideGraph +
-          (hide.length ? `${video}split=${pieces.length}${pieces.map((_, i) => `[s${i}]`).join("")};` : "") +
+          (anyHidden ? `${video}split=${pieces.length}${pieces.map((_, i) => `[s${i}]`).join("")};` : "") +
           pieces
             .map(([s, e], i) => {
               const fadeOut = Math.max(0, e - s - 0.015).toFixed(3);
-              return `${hide.length ? `[s${i}]` : "[0:v]"}trim=${s.toFixed(3)}:${e.toFixed(3)},setpts=PTS-STARTPTS[v${i}];` +
+              return `${anyHidden ? `[s${i}]` : "[0:v]"}trim=${s.toFixed(3)}:${e.toFixed(3)},setpts=PTS-STARTPTS[v${i}];` +
                 `[0:a]atrim=${s.toFixed(3)}:${e.toFixed(3)},asetpts=PTS-STARTPTS,afade=t=in:d=0.015,afade=t=out:st=${fadeOut}:d=0.015[a${i}];`;
             })
             .join("") + `${pieces.map((_, i) => `[v${i}][a${i}]`).join("")}concat=n=${pieces.length}:v=1:a=1[v][a]`,
           "-map", "[v]", "-map", "[a]",
         ]
-    : hide.length
+    : anyHidden
       ? ["-filter_complex", hideGraph.replace(/;$/, ""), "-map", video, "-map", "0:a?"]
       : [];
   try {

@@ -6,6 +6,7 @@ import { ArrowLeft, Check, ExternalLink, Loader2, AlertCircle } from "lucide-rea
 import type { Analysis, ModelRun } from "@/lib/analyses";
 import { CLIP_LENGTH_PRESETS } from "@/lib/clipLength";
 import { ClipTile } from "./ClipTile";
+import { HideAreas } from "./HideAreas";
 import { clock, cn, when } from "./format";
 
 /**
@@ -114,6 +115,8 @@ export function ProjectView({ id, onBack }: { id: string; onBack: () => void }) 
           {!active && step !== "error" && analysis.oneClick && <span>· made in {clock(elapsed)}</span>}
         </div>
       </div>
+
+      {analysis.downloadedAt && !analysis.sourceDeleted && <HideAreas analysisId={analysis.id} saved={analysis.hideAreas ?? []} onSaved={load} />}
 
       {step === "error" && (
         <div className="mb-8 flex items-start gap-3 rounded-2xl border border-red-500/20 bg-red-500/[0.06] p-4 text-sm text-red-300">
