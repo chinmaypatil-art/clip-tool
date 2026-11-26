@@ -88,6 +88,9 @@ async function startVideo(req: NextRequest) {
       // Unreadable settings: fall back to the defaults rather than failing the upload.
     }
     const analysis = createAnalysis(name, "file");
+    // Saved before the upload so a retry after a dropped connection keeps them.
+    applySettings(analysis.id, settings);
+    updateAnalysis(analysis.id, { title: name.replace(/\.[^.]+$/, "") });
     const dir = await ensureAnalysisDir(analysis.id);
     const uploadPath = path.join(dir, "upload-raw");
     try {
@@ -101,8 +104,6 @@ async function startVideo(req: NextRequest) {
         return NextResponse.json({ error: "The upload was interrupted. Try again." }, { status: 400 });
       }
     }
-    applySettings(analysis.id, settings);
-    updateAnalysis(analysis.id, { title: name.replace(/\.[^.]+$/, "") });
     void makeClips(analysis.id, { kind: "file", path: uploadPath });
     return NextResponse.json({ analysisId: analysis.id });
   }

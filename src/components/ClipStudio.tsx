@@ -242,7 +242,7 @@ export default function ClipStudio() {
               ) : (
                 <label className="flex cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-white/15 bg-black/20 py-10 text-sm text-zinc-400 transition-colors hover:border-violet-500/50">
                   <UploadCloud size={22} />
-                  {file ? file.name : "Click to choose an MP4 (up to 2GB)"}
+                  {file ? file.name : "Click to choose a video"}
                   <input
                     type="file"
                     accept="video/mp4,video/quicktime,video/x-matroska,video/webm"

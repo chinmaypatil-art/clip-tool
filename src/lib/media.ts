@@ -260,8 +260,12 @@ export async function probeVideo(filePath: string): Promise<ProbeResult> {
 
   const videoStream = parsed.streams?.find((s) => s.codec_type === "video");
   const audioStream = parsed.streams?.find((s) => s.codec_type === "audio");
-  const durationStr = parsed.format?.duration ?? videoStream?.duration;
-  const durationSeconds = durationStr ? parseFloat(durationStr) : NaN;
+  // A header can claim more than the file holds (a retried upload said 47 min
+  // for a 30 min file): trust the shorter of the container and the video track.
+  const lengths = [parsed.format?.duration, videoStream?.duration]
+    .map((d) => (d ? parseFloat(d) : NaN))
+    .filter((d) => Number.isFinite(d) && d > 0);
+  const durationSeconds = lengths.length ? Math.min(...lengths) : NaN;
 
   if (!videoStream || !Number.isFinite(durationSeconds) || durationSeconds <= 0) {
     throw new MediaError(`"${filePath}" does not appear to contain a valid video stream.`);

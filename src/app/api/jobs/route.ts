@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import path from "path";
-import { writeFile } from "fs/promises";
+import { createWriteStream } from "fs";
+import { Readable } from "stream";
+import { pipeline } from "stream/promises";
+import type { ReadableStream as NodeReadableStream } from "stream/web";
 import { createJob, ensureJobDir, listJobs } from "@/lib/jobs";
 import { isUrl } from "@/lib/media";
 import { runPipeline } from "@/lib/pipeline";
@@ -37,18 +40,14 @@ export async function POST(req: NextRequest) {
     if (file.size === 0) {
       return NextResponse.json({ error: "Uploaded file is empty." }, { status: 400 });
     }
-    const maxBytes = 2 * 1024 * 1024 * 1024; // 2GB, matches Gemini free-tier Files API cap
-    if (file.size > maxBytes) {
-      return NextResponse.json({ error: "File exceeds 2GB limit." }, { status: 400 });
-    }
 
     const lengthField = form.get("clipLength");
     const clipLength = isClipLengthPreset(lengthField) ? lengthField : DEFAULT_CLIP_LENGTH;
     const job = createJob(file.name, clipLength);
     const dir = await ensureJobDir(job.id);
     const uploadPath = path.join(dir, "upload-raw");
-    const bytes = Buffer.from(await file.arrayBuffer());
-    await writeFile(uploadPath, bytes);
+    // Streamed to disk: reading it into memory capped uploads at 2 GB.
+    await pipeline(Readable.fromWeb(file.stream() as NodeReadableStream), createWriteStream(uploadPath));
 
     void runPipeline({ jobId: job.id, source: { kind: "file", path: uploadPath }, clipLength });
     return NextResponse.json({ jobId: job.id });
