@@ -168,10 +168,23 @@ export async function makeClips(
   await runTranscriptExtraction(analysisId, source);
   const analysis = getAnalysis(analysisId);
   if (analysis?.status !== "ready") return;
+  // Gemma picks from the words; with hardly any speech (raw sports, phone
+  // footage) it has nothing to go on, so Claude picks by watching instead.
+  if (!hasUsableSpeech(analysis.transcript?.segments ?? [], analysis.videoDurationSeconds)) {
+    updateAnalysis(analysisId, { waitingForClaude: true });
+    return;
+  }
 
   // Nothing renders by itself: the user sees the picks and hooks first and
   // renders only the ones they want.
   await runModelAgainstAnalysis(analysisId, CLIP_PICKER.provider, CLIP_PICKER.model, analysis.clipLength);
+}
+
+/** Enough words for a transcript picker: at least 30 a minute (talk runs 120+). */
+export function hasUsableSpeech(segments: TranscriptSegment[], durationSeconds: number | null): boolean {
+  const words = segments.reduce((n, s) => n + s.text.split(/\s+/).filter(Boolean).length, 0);
+  const minutes = Math.max(1, (durationSeconds ?? 0) / 60);
+  return words >= 40 && words / minutes >= 30;
 }
 
 /**
@@ -197,6 +210,7 @@ export function addPickedClips(analysisId: string, picker: string, picked: Norma
     rawResponse: picked,
   };
   addRun(analysisId, run);
+  updateAnalysis(analysisId, { waitingForClaude: undefined });
   return run.id;
 }
 

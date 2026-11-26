@@ -29,7 +29,7 @@ interface Clip {
   startSeconds: number; endSeconds: number; renderStatus: string; renderQueuedAt?: number; renderError?: string; renderFilename?: string; review?: { verdict: string; reasons: string[]; note: string };
 }
 interface Analysis {
-  id: string; createdAt: number; oneClick?: boolean; status: string; error: string | null; title?: string; sourceLabel: string; archived?: boolean; focus?: string; videoDurationSeconds: number | null;
+  id: string; createdAt: number; oneClick?: boolean; status: string; error: string | null; title?: string; sourceLabel: string; archived?: boolean; focus?: string; waitingForClaude?: boolean; videoDurationSeconds: number | null;
   transcript: { segments: { startMs: number; endMs: number; text: string }[] } | null;
   runs: { id: string; provider: string; model: string; status: string; error: string | null; clips: Clip[] }[];
 }
@@ -106,8 +106,16 @@ const fmt = (s: number) => `${Math.floor(s / 60)}:${(s % 60).toFixed(1).padStart
 
 const server = new McpServer(
   { name: "clipwise", version: "0.1.0" },
-  { instructions: `Clipwise makes short vertical clips from long videos. Two pickers:\n- gemma: make_clips(url, picker 'gemma') -> get_progress until DONE. Clipwise picks from the transcript.\n- claude (you watch it; for no speech or a useless transcript): make_clips(url, picker 'claude') -> get_progress until READY TO WATCH -> get_loud_moments + get_timeline -> submit_clips. The user renders the picks they like.\nOptional afterwards: review rendered clips with list_clips -> get_clip_pack -> submit_review. Reviews never replace the human's.\nBe efficient: get_progress waits by itself, so never poll in a loop; don't fetch the same stretch or clip pack twice; keep notes to one line.\n\nHOW TO PICK:\n${PICK_GUIDE}\n\nHOW TO REVIEW:\n${RUBRIC}` }
+  { instructions: `Clipwise makes short vertical clips from long videos. Two pickers. Clipwise chooses by itself: Gemma when the video has speech; otherwise the video waits for you (list_waiting).\n- gemma: make_clips(url, picker 'gemma') -> get_progress until DONE. Clipwise picks from the transcript.\n- claude (you watch it; for no speech or a useless transcript): make_clips(url, picker 'claude') -> get_progress until READY TO WATCH -> get_loud_moments + get_timeline -> submit_clips. The user renders the picks they like.\nOptional afterwards: review rendered clips with list_clips -> get_clip_pack -> submit_review. Reviews never replace the human's.\nBe efficient: get_progress waits by itself, so never poll in a loop; don't fetch the same stretch or clip pack twice; keep notes to one line.\n\nHOW TO PICK:\n${PICK_GUIDE}\n\nHOW TO REVIEW:\n${RUBRIC}` }
 );
+
+server.registerTool("list_waiting", {
+  description: "Videos Clipwise could not pick by itself (almost no speech) and that wait for you to watch and pick: get_loud_moments + get_timeline, then submit_clips.",
+  inputSchema: {},
+}, async () => {
+  const waiting = (await loadAll()).filter((a) => a.waitingForClaude && !a.archived && a.runs.length === 0).sort((x, y) => y.createdAt - x.createdAt);
+  return { content: [txt(waiting.map((a) => `analysisId=${a.id} | ${a.title ?? a.sourceLabel} | ${hms(a.videoDurationSeconds ?? 0)} long`).join("\n") || "No videos are waiting.")] };
+});
 
 server.registerTool("list_clips", {
   description: "Rendered clips, newest videos first. Shows the human review (if any) and which AI reviewers already reviewed each clip.",
@@ -330,7 +338,7 @@ async function progress(analysisId: string): Promise<{ text: string; final: bool
   if (a.status === "error") return { text: `Failed: ${a.error}`, final: true };
   if (a.status === "extracting_transcript") return { text: "Downloading and transcribing.", final: false };
   const r = a.runs.at(-1);
-  if (!r && !a.oneClick) {
+  if (!r && (!a.oneClick || a.waitingForClaude)) {
     const lines = a.transcript?.segments.length ?? 0;
     return { text: `READY TO WATCH (${hms(a.videoDurationSeconds ?? 0)} long, ${lines ? `${lines} transcript lines` : "no transcript"}). Pick clips: get_loud_moments, get_timeline, then submit_clips.`, final: true };
   }

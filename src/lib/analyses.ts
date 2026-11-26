@@ -113,6 +113,8 @@ export interface Analysis {
   captionStyle?: CaptionStyle | null;
   /** What the user asked the picker to look for ("funny moments"). */
   focus?: string;
+  /** Too little speech for Gemma to pick from: waits for Claude to watch it over MCP. */
+  waitingForClaude?: boolean;
 }
 
 const analyses = processSingleton("analyses", () => new Map<string, Analysis>());
