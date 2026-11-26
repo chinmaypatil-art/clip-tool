@@ -40,7 +40,7 @@ export async function GET(
   const headers = {
     "Content-Type": isThumbnail || filename.endsWith(".jpg")
       ? "image/jpeg"
-      : filename.endsWith(".png") ? "image/png" : filename.endsWith(".webp") ? "image/webp" : filename.endsWith(".json") ? "application/json" : "video/mp4",
+      : filename.endsWith(".png") ? "image/png" : filename.endsWith(".mov") ? "video/quicktime" : filename.endsWith(".webm") ? "video/webm" : filename.endsWith(".webp") ? "image/webp" : filename.endsWith(".json") ? "application/json" : "video/mp4",
     "Content-Disposition": dispositionFor(req, filename),
     "Accept-Ranges": "bytes",
   };

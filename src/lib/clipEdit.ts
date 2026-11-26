@@ -11,7 +11,7 @@ export interface LayoutOverride {
   focusX: number;
 }
 
-/** A picture the user uploaded, shown full-screen over these source seconds (voice and captions keep going). */
+/** A picture or video the user uploaded, shown full-screen over these source seconds (voice and captions keep going). */
 export interface BrollItem {
   file: string;
   fromSeconds: number;
@@ -19,7 +19,8 @@ export interface BrollItem {
 }
 
 /** Uploaded B-roll files: the server names them, so only this shape is ever trusted. */
-export const BROLL_FILE = /^broll-[0-9a-f-]{36}\.(png|jpg|webp)$/;
+export const BROLL_FILE = /^broll-[0-9a-f-]{36}\.(png|jpg|webp|mp4|mov|webm)$/;
+export const isBrollVideo = (file: string) => /\.(mp4|mov|webm)$/.test(file);
 
 /**
  * A user's edits to one clip, made in the editor by hand or by asking the AI.

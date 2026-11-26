@@ -7,6 +7,7 @@ import { WIDTH, HEIGHT, FPS } from "../../remotion/types";
 import { getFfmpegPath } from "./binaries";
 import { probeVideo } from "./media";
 import { CAPTION_FONTS, CAPTION_SIZES, DEFAULT_CAPTION_STYLE, type CaptionStyle } from "./captionStyle";
+import { isBrollVideo } from "./clipEdit";
 
 const runFile = promisify(execFile);
 // Every external tool gets a time limit, so a stuck process fails the job
@@ -253,7 +254,8 @@ export async function renderClipFfmpeg(input: FfmpegRenderInput): Promise<void> 
   const graph = [
     videoGraph(S, input.framing, d, width, height).replace("[vout]", "[bv0]"),
     ...broll.flatMap((b, i) => [
-      `[${i + 1}:v]scale=${S.w}:${S.h}:force_original_aspect_ratio=increase,crop=${S.w}:${S.h},setsar=1,format=yuv420p[br${i}]`,
+      // A video starts playing when its stretch begins (and loops if it's shorter).
+      `[${i + 1}:v]scale=${S.w}:${S.h}:force_original_aspect_ratio=increase,crop=${S.w}:${S.h},setsar=1,fps=${FPS},format=yuv420p${isBrollVideo(b.path) ? `,setpts=PTS-STARTPTS+${b.fromSeconds.toFixed(3)}/TB` : ""}[br${i}]`,
       `[bv${i}][br${i}]overlay=0:0:shortest=1:enable='between(t,${b.fromSeconds.toFixed(3)},${b.toSeconds.toFixed(3)})'[bv${i + 1}]`,
     ]),
     `[bv${broll.length}]${captions ? `ass='${filterPath(assPath)}',` : ""}format=yuv420p[vout]`,
@@ -270,7 +272,7 @@ export async function renderClipFfmpeg(input: FfmpegRenderInput): Promise<void> 
       [
         "-y", "-hide_banner", "-loglevel", "error",
         "-i", input.segmentPath,
-        ...broll.flatMap((b) => ["-loop", "1", "-framerate", String(FPS), "-i", b.path]),
+        ...broll.flatMap((b) => (isBrollVideo(b.path) ? ["-stream_loop", "-1", "-i", b.path] : ["-loop", "1", "-framerate", String(FPS), "-i", b.path])),
         "-/filter_complex", graphPath,
         "-map", "[vout]", "-map", "[aout]",
         "-t", d.toFixed(3),

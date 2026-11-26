@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { ImagePlus, Loader2, Pause, Play, Redo2, RotateCcw, Send, Sparkles, Trash2, Undo2, Wand2, X } from "lucide-react";
 import type { Caption } from "@remotion/captions";
 import type { AnalysisClip } from "@/lib/analyses";
-import type { ClipEdit, LayoutOverride } from "@/lib/clipEdit";
+import { isBrollVideo, type ClipEdit, type LayoutOverride } from "@/lib/clipEdit";
 import type { AiEditOps } from "@/lib/aiEdit";
 import { DEFAULT_CAPTION_STYLE } from "@/lib/captionStyle";
 import { isFiller } from "@/lib/tighten";
@@ -117,7 +117,7 @@ export function ClipEditor({
   const selRange: Range | null = selWords.length ? [selWords[0].start, selWords.at(-1)!.end] : null;
   const selRemoved = selWords.length > 0 && selWords.every((w) => isCut(w, removed));
 
-  // B-roll: the user's own pictures over chosen words (nothing automatic).
+  // B-roll: the user's own pictures and videos over chosen words (nothing automatic).
   const broll = edit.broll ?? [];
   const brollNow = broll.find((b) => now >= b.fromSeconds && now < b.toSeconds);
   const fileUrl = (name: string) => `/api/analyses/${analysisId}/files/${name}`;
@@ -130,9 +130,8 @@ export function ClipEditor({
     setUploading(true);
     setError("");
     try {
-      const form = new FormData();
-      form.append("file", file);
-      const res = await fetch(`/api/analyses/${analysisId}/broll`, { method: "POST", body: form });
+      // Raw body, not form data: videos can be far bigger than form uploads allow.
+      const res = await fetch(`/api/broll?analysisId=${analysisId}`, { method: "POST", headers: { "Content-Type": file.type }, body: file });
       const body: { file?: string; error?: string } = await res.json().catch(() => ({}));
       if (!res.ok || !body.file) throw new Error(body.error ?? "Upload failed.");
       change({ ...edit, broll: [...broll, { file: body.file, fromSeconds: range[0], toSeconds: range[1] }] });
@@ -346,10 +345,13 @@ export function ClipEditor({
               className={cn("h-full w-full cursor-pointer", vertical && layoutNow?.mode !== "fit" ? "object-cover" : "object-contain")}
               style={vertical && layoutNow?.mode === "fill" ? { objectPosition: `${layoutNow.focusX}% 50%` } : undefined}
             />
-            {brollNow && (
-              // eslint-disable-next-line @next/next/no-img-element -- a local, already-sized upload
-              <img src={fileUrl(brollNow.file)} alt="B-roll" className="pointer-events-none absolute inset-0 h-full w-full object-cover" />
-            )}
+            {brollNow &&
+              (isBrollVideo(brollNow.file) ? (
+                <video key={brollNow.file} src={fileUrl(brollNow.file)} muted autoPlay loop playsInline className="pointer-events-none absolute inset-0 h-full w-full object-cover" />
+              ) : (
+                // eslint-disable-next-line @next/next/no-img-element -- a local, already-sized upload
+                <img src={fileUrl(brollNow.file)} alt="B-roll" className="pointer-events-none absolute inset-0 h-full w-full object-cover" />
+              ))}
             {!playing && (
               <button onClick={togglePlay} className="absolute inset-0 m-auto flex h-14 w-14 items-center justify-center rounded-full bg-white/90 text-zinc-900 shadow-lg" aria-label="Play">
                 <Play size={22} className="ml-1" />
@@ -457,7 +459,7 @@ export function ClipEditor({
                 <input
                   ref={picker}
                   type="file"
-                  accept="image/png,image/jpeg,image/webp"
+                  accept="image/png,image/jpeg,image/webp,video/mp4,video/quicktime,video/webm"
                   className="hidden"
                   onChange={(e) => {
                     const f = e.target.files?.[0];
@@ -467,17 +469,21 @@ export function ClipEditor({
                 />
                 {broll.length > 0 && (
                   <div className="mb-4 space-y-1.5">
-                    <p className="text-[11px] uppercase tracking-wide text-zinc-500">Images (B-roll)</p>
+                    <p className="text-[11px] uppercase tracking-wide text-zinc-500">Pictures and videos (B-roll)</p>
                     {broll.map((b, i) => (
                       <div key={`${b.file}-${i}`} className="flex items-center gap-3 rounded-xl bg-white/[0.04] p-1.5 ring-1 ring-white/[0.08]">
-                        {/* eslint-disable-next-line @next/next/no-img-element -- a local upload */}
-                        <img src={fileUrl(b.file)} alt="" className="h-12 w-7 rounded-md object-cover" />
+                        {isBrollVideo(b.file) ? (
+                          <video src={fileUrl(b.file)} muted preload="metadata" className="h-12 w-7 rounded-md object-cover" />
+                        ) : (
+                          // eslint-disable-next-line @next/next/no-img-element -- a local upload
+                          <img src={fileUrl(b.file)} alt="" className="h-12 w-7 rounded-md object-cover" />
+                        )}
                         <button className="flex-1 text-left text-xs tabular-nums text-zinc-300 hover:text-white" onClick={() => seek(b.fromSeconds)}>
                           {clock(Math.max(0, b.fromSeconds - start))} – {clock(Math.max(0, b.toSeconds - start))}
                         </button>
                         <button
                           className="rounded-lg p-2 text-zinc-500 transition hover:bg-red-500/15 hover:text-red-300"
-                          aria-label="Remove image"
+                          aria-label="Remove B-roll"
                           onClick={() => change({ ...edit, broll: broll.filter((_, k) => k !== i) })}
                         >
                           <Trash2 size={13} />
@@ -498,10 +504,10 @@ export function ClipEditor({
                       brollFor.current = selRange;
                       picker.current?.click();
                     }}
-                    title="Show your own picture full-screen over these words"
+                    title="Show your own picture or video full-screen over these words"
                   >
                     {uploading ? <Loader2 size={12} className="mr-1 inline animate-spin" /> : <ImagePlus size={12} className="mr-1 inline" />}
-                    Add image
+                    Add B-roll
                   </button>
                   <button className={ghost} onClick={() => selRange && push({ start: selRange[0] - 0.05 })}>
                     Start here

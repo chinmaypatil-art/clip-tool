@@ -13,8 +13,8 @@ export async function proxy(request: NextRequest) {
   return NextResponse.redirect(new URL("/login", request.url));
 }
 
-// /api/analyses checks access itself: requests passing through the proxy are
+// /api/analyses and /api/broll check access themselves: requests passing through the proxy are
 // buffered in memory and cut off at 10 MB, which would truncate video uploads.
 export const config = {
-  matcher: ["/((?!login|api/login|api/analyses$|_next/|favicon.ico).*)"],
+  matcher: ["/((?!login|api/login|api/analyses$|api/broll$|_next/|favicon.ico).*)"],
 };
