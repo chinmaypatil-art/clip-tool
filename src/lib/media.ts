@@ -1,6 +1,7 @@
 import { execFile, spawn } from "child_process";
 import { promisify } from "util";
-import { existsSync } from "fs";
+import { existsSync, readdirSync, statSync } from "fs";
+import path from "path";
 import { getFfmpegPath, getFfprobePath, getYtDlpPath } from "./binaries";
 
 const runFile = promisify(execFile);
@@ -156,7 +157,23 @@ function runDownload(
     let stalled = false;
 
     // yt-dlp can sit forever on a dead connection; no output for 5 minutes means stuck.
+    // Merging a long video's streams prints nothing for many minutes (15 GB
+    // took over 5), so files in the folder still growing count as progress.
     let watchdog: NodeJS.Timeout | undefined;
+    let lastBytes = -1;
+    const growth = setInterval(() => {
+      const dir = path.dirname(outPath);
+      let bytes = 0;
+      try {
+        for (const f of readdirSync(dir)) bytes += statSync(path.join(dir, f)).size;
+      } catch {
+        return;
+      }
+      if (bytes !== lastBytes) {
+        lastBytes = bytes;
+        feedWatchdog();
+      }
+    }, 30_000);
     const feedWatchdog = () => {
       clearTimeout(watchdog);
       watchdog = setTimeout(() => {
@@ -183,11 +200,13 @@ function runDownload(
     });
     proc.on("error", (err) => {
       clearTimeout(watchdog);
+      clearInterval(growth);
       signal?.removeEventListener("abort", onAbort);
       reject(new MediaError(`Failed to launch yt-dlp: ${err.message}`, err));
     });
     proc.on("close", (code) => {
       clearTimeout(watchdog);
+      clearInterval(growth);
       signal?.removeEventListener("abort", onAbort);
       if (cancelled) {
         reject(new CancelledError());
