@@ -1,6 +1,6 @@
 import path from "path";
 import { copyFile, link, rm, writeFile } from "fs/promises";
-import { existsSync } from "fs";
+import { existsSync, readdirSync, statSync } from "fs";
 import { createTikTokStyleCaptions, type Caption } from "@remotion/captions";
 import { hookToSentence, keepRanges, keptLength, remapCaptions, remapFraming, type KeepRange } from "./tighten";
 import { applyLayout, subtractRanges, type LayoutOverride } from "./clipEdit";
@@ -72,6 +72,48 @@ export function sameVideo(a: string | undefined, b: string): boolean {
   return !!a && id(a) === id(b);
 }
 
+/**
+ * Downloads a link and keeps stageNote current: yt-dlp's percentage while
+ * downloading, then the joined file's size while it puts picture and sound
+ * together (several silent minutes for a long video, which looked stuck).
+ */
+async function downloadWithProgress(analysisId: string, url: string, sourcePath: string): Promise<void> {
+  const dir = path.dirname(sourcePath);
+  let lastSent = 0;
+  let joining: NodeJS.Timeout | undefined;
+  const note = (text: string, percent: number | null, force = false) => {
+    if (!force && Date.now() - lastSent < 2000) return;
+    lastSent = Date.now();
+    updateAnalysis(analysisId, { stageNote: { text, percent } });
+  };
+  note("Starting the download", null, true);
+  const parts = new Set<string>();
+  try {
+    await downloadVideo(url, sourcePath, (chunk) => {
+      for (const line of chunk.split(/[\r\n]+/)) {
+        const dest = line.match(/\[download\] Destination: (.+)$/) ?? line.match(/\[download\] (.+) has already been downloaded/);
+        if (dest) parts.add(path.basename(dest[1].trim()));
+        const pct = line.match(/\[download\]\s+([\d.]+)%/);
+        // Video and sound download one after the other; say which.
+        if (pct && !joining) note(parts.size > 1 ? "Downloading the sound" : "Downloading the video", Math.min(100, Math.round(Number(pct[1]))));
+        if (/\[Merger\]|Merging formats/.test(line) && !joining) {
+          note("Preparing the video (joining picture and sound)", 0, true);
+          joining = setInterval(() => {
+            try {
+              const size = (f: string) => (existsSync(path.join(dir, f)) ? statSync(path.join(dir, f)).size : 0);
+              const total = [...parts].reduce((n, f) => n + size(f), 0);
+              const temp = readdirSync(dir).filter((f) => f.includes(".temp.")).reduce((n, f) => n + size(f), 0);
+              if (total) note("Preparing the video (joining picture and sound)", Math.min(99, Math.round((temp / total) * 100)), true);
+            } catch {}
+          }, 3000);
+        }
+      }
+    });
+  } finally {
+    clearInterval(joining);
+  }
+}
+
 export async function runTranscriptExtraction(
   analysisId: string,
   source: { kind: "url"; url: string } | { kind: "file"; path: string }
@@ -92,12 +134,12 @@ export async function runTranscriptExtraction(
         // A hard link shares the bytes without using more disk; copy if linking isn't possible.
         await link(from, sourcePath).catch(() => copyFile(from, sourcePath));
       } else {
-        await downloadVideo(source.url, sourcePath, () => {});
+        await downloadWithProgress(analysisId, source.url, sourcePath);
       }
     } else {
       await copyFile(source.path, sourcePath);
     }
-    updateAnalysis(analysisId, { downloadedAt: Date.now() });
+    updateAnalysis(analysisId, { downloadedAt: Date.now(), stageNote: { text: "Checking the video", percent: null } });
 
     const probe = await probeVideo(sourcePath);
     if (probe.durationSeconds < 30) {
@@ -106,11 +148,13 @@ export async function runTranscriptExtraction(
     updateAnalysis(analysisId, { videoDurationSeconds: probe.durationSeconds });
 
     if (source.kind === "url" && isYoutubeUrl(source.url)) {
+      updateAnalysis(analysisId, { stageNote: { text: "Getting YouTube's captions", percent: null } });
       const transcriptDir = path.join(dir, "transcript-tmp");
       try {
         const transcript = await extractYoutubeTranscript(source.url, transcriptDir);
         updateAnalysis(analysisId, {
           status: "ready",
+          stageNote: undefined,
           transcriptReadyAt: Date.now(),
           transcript: { segments: transcript.segments, language: transcript.language, source: transcript.source },
         });
@@ -126,7 +170,15 @@ export async function runTranscriptExtraction(
     // Non-YouTube source, or a YouTube video whose captions we couldn't get —
     // transcribe the full video locally with Whisper.
     const wavPath = path.join(dir, "full-audio.wav");
+    updateAnalysis(analysisId, { stageNote: { text: "Taking the sound out of the video", percent: null } });
     await extractAudioSegment(sourcePath, wavPath, 0, probe.durationSeconds);
+    const hours = probe.durationSeconds / 3600;
+    updateAnalysis(analysisId, {
+      stageNote: {
+        text: `Listening to the whole video and writing down what's said${hours >= 1 ? ` (a ${hours.toFixed(1)}-hour video takes a while)` : ""}`,
+        percent: null,
+      },
+    });
     // Only models read this transcript, and they read Devanagari fine — no romanization needed.
     // No gap re-checks either: each gap costs ~35 s (a 66-min video spent 30+ min
     // on them), and every picked clip is re-transcribed with them anyway.
@@ -137,6 +189,7 @@ export async function runTranscriptExtraction(
     const segments = captionsToSegments(captions);
     updateAnalysis(analysisId, {
       status: "ready",
+      stageNote: undefined,
       transcriptReadyAt: Date.now(),
       transcript: { segments, language: "en", source: "whisper" },
     });

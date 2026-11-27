@@ -90,6 +90,8 @@ export interface Analysis {
   error: string | null;
   createdAt: number;
   updatedAt: number;
+  /** What the current step is doing right now, for the progress screen; cleared when the step ends. */
+  stageNote?: { text: string; percent: number | null };
   /** Stage timestamps (ms) for timing reports. */
   downloadedAt?: number;
   transcriptReadyAt?: number;

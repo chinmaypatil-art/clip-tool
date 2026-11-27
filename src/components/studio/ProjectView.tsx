@@ -40,6 +40,18 @@ function stepOf(a: Analysis, run: ModelRun | undefined): number | "error" {
   return 4;
 }
 
+/** One plain sentence about what's happening now, and how far along it is when we know. */
+function nowDoing(a: Analysis, run: ModelRun | undefined, step: number | "error", done: number, total: number): { text: string; percent: number | null } | null {
+  if (step === 0 || step === 1) return a.stageNote ?? (step === 0 ? { text: "Starting the download", percent: null } : null);
+  if (step === 2) {
+    if (a.waitingForClaude) return { text: "Claude is watching the video and choosing the best moments (usually 2-5 min)", percent: null };
+    return { text: "Gemma is reading what's said and choosing the best moments", percent: null };
+  }
+  if (step === 3 && total) return { text: `Making your clips: framing, captions and sound (${done} of ${total} ready)`, percent: Math.round((done / total) * 100) };
+  void run;
+  return null;
+}
+
 export function ProjectView({ id, onBack }: { id: string; onBack: () => void }) {
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
   const [missing, setMissing] = useState(false);
@@ -90,6 +102,8 @@ export function ProjectView({ id, onBack }: { id: string; onBack: () => void }) 
 
   const clips = run?.clips ?? [];
   const done = clips.filter((c) => c.renderStatus === "done").length;
+  // Only clips someone chose to render count; the rest wait for a click.
+  const doing = analysis ? nowDoing(analysis, run, step, done, clips.filter((c) => c.renderStatus === "rendering" || c.renderStatus === "done").length) : null;
   const minSeconds = run?.clipLength ? CLIP_LENGTH_PRESETS[run.clipLength].minSeconds : undefined;
   const finishedAt = Math.max(0, ...clips.map((c) => c.renderFinishedAt ?? 0)) || analysis.updatedAt;
   const elapsed = Math.round(((active ? now : finishedAt) - analysis.createdAt) / 1000);
@@ -153,16 +167,22 @@ export function ProjectView({ id, onBack }: { id: string; onBack: () => void }) 
           <div className="mt-4 h-1 overflow-hidden rounded-full bg-white/[0.05]">
             <motion.div
               className="h-full rounded-full bg-white/70"
-              animate={{ width: `${((typeof step === "number" ? step : 0) + (step === 3 && clips.length ? done / clips.length : 0.4)) * 25}%` }}
+              animate={{ width: `${((typeof step === "number" ? step : 0) + (doing?.percent != null ? doing.percent / 100 : 0.4)) * 25}%` }}
               transition={{ ease: "easeOut", duration: 0.6 }}
             />
           </div>
+          {doing && (
+            <p className="mt-3 flex items-baseline justify-between gap-3 text-xs text-zinc-300">
+              <span>{doing.text}…</span>
+              {doing.percent != null && <span className="shrink-0 tabular-nums text-zinc-400">{doing.percent}%</span>}
+            </p>
+          )}
           {(analysis.queueAhead || run?.queueAhead) && (
             <p className="mt-4 text-xs text-amber-300/90">
               Waiting for another video to finish ({analysis.queueAhead || run?.queueAhead} ahead of yours). It starts automatically.
             </p>
           )}
-          <p className="mt-3 text-[11px] tabular-nums text-zinc-600">{clock(elapsed)} so far · usually 8–10 min. You can leave this page; it keeps going.</p>
+          <p className="mt-3 text-[11px] tabular-nums text-zinc-600">{clock(elapsed)} so far · long videos take longer. You can leave this page; it keeps going.</p>
         </div>
       )}
 
