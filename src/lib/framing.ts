@@ -463,8 +463,11 @@ export async function analyzeFraming(
     // view (blurred fill above and below) while the hands are moving. Only
     // with a speaker on screen: cooking or craft hands with no face in shot
     // move all the time and kept the whole clip shrunk.
+    // A speaker is someone in most of the shot, not a stray false detection
+    // (a burger clip found a "face" in a few frames and shrank for 110 s).
     const faces = perShot[s].flat();
-    if (decision.mode === "fill" && crop < 1 && faces.length > 0) {
+    const speakerOnScreen = perShot[s].filter((f) => f.length > 0).length >= perShot[s].length * 0.5;
+    if (decision.mode === "fill" && crop < 1 && speakerOnScreen) {
       const faceBottom = median(faces.map((f) => f.y2));
       const runs = holdRuns(gestureSamples(frames, shotSamples[s], decision.focusX, crop, faceBottom, (x) => ox + x * cw, (y) => oy + y * ch));
       if (runs.some((r) => r.who)) {
