@@ -12,7 +12,7 @@ const gpuSlot = processSingleton("gpuSlot", () => createLimiter(1));
 
 /**
  * Ask AI: turns the editor's request into edit operations on the clip's
- * numbered sentences. Body: { request, sentences: [{text, removed}], seconds }.
+ * numbered lines or in seconds. Body: { request, sentences: [{text, removed, at}], seconds }.
  * Nothing is saved here; the editor applies the answer to its edit list.
  */
 export async function POST(
@@ -26,18 +26,28 @@ export async function POST(
 
   const body = await req.json().catch(() => null);
   const request = typeof body?.request === "string" ? body.request.trim().slice(0, 500) : "";
-  const sentences: Array<{ text: string; removed: boolean }> = Array.isArray(body?.sentences)
-    ? body.sentences.slice(0, 200).map((s: { text?: unknown; removed?: unknown }) => ({ text: String(s?.text ?? "").slice(0, 400), removed: s?.removed === true }))
+  const sentences: Array<{ text: string; removed: boolean; at?: number }> = Array.isArray(body?.sentences)
+    ? body.sentences.slice(0, 200).map((s: { text?: unknown; removed?: unknown; at?: unknown }) => ({
+        text: String(s?.text ?? "").slice(0, 400),
+        removed: s?.removed === true,
+        at: Number.isFinite(s?.at) ? Number(s.at) : undefined,
+      }))
     : [];
-  if (!request || !sentences.length) return NextResponse.json({ error: "Type what you want changed." }, { status: 400 });
+  const seconds = Number(body?.seconds) || 60;
+  if (!request) return NextResponse.json({ error: "Type what you want changed." }, { status: 400 });
 
   // Plain commands by rule; whatever is left goes to the model.
   const parts: AiEditOps[] = [];
   const rest: string[] = [];
   for (const c of clauses(request)) {
-    const ops = ruleEdit(c, sentences.length);
+    const ops = ruleEdit(c, Math.max(1, sentences.length), seconds);
     if (ops) parts.push(ops);
     else rest.push(c);
+  }
+  if (rest.length && !sentences.length) {
+    return NextResponse.json({
+      error: "This clip has no speech for the AI to read. Use times instead, like \"end at 0:29\" or \"start 5 seconds earlier\".",
+    }, { status: 400 });
   }
   if (rest.length) {
     // Claude's picks have no local model of their own; local Gemma edits them.
@@ -45,7 +55,7 @@ export async function POST(
     if (!chat) return NextResponse.json({ error: "Ask AI needs a local (Ollama) model." }, { status: 400 });
     try {
       await ensureOllama();
-      const answer = await gpuSlot(() => chat(buildAiEditPrompt(rest.join(", "), sentences, Number(body.seconds) || 60), 300));
+      const answer = await gpuSlot(() => chat(buildAiEditPrompt(rest.join(", "), sentences, seconds), 300));
       parts.push(parseAiEdit(answer, sentences.length));
     } catch (err) {
       console.error("[ai-edit] failed:", err);

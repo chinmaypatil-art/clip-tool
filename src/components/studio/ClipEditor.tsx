@@ -30,14 +30,18 @@ const inRanges = (t: number, ranges: Range[]) => ranges.some(([s, e]) => t >= s 
 const isCut = (w: Word, removed: Range[]) => inRanges((w.start + w.end) / 2, removed);
 // Pauses longer than this count as silences for one-click removal (as tighten.ts).
 const SILENCE = 0.8;
-const SUGGESTIONS = ["Cut the first sentence", "Make it about 30 seconds", "Remove the ums", "Turn off the hook", "Zoom out at the start"];
+const SUGGESTIONS = ["End it properly", "Start 3 seconds earlier", "End at 0:29", "Make it about 30 seconds", "Cut line 2", "Turn off the hook"];
+// Captions without punctuation (Marathi, Hinglish) still split into lines at a pause or after this many words.
+const LINE_GAP = 0.6;
+const LINE_WORDS = 14;
 
-/** Words grouped into sentences (by . ? !), as word index ranges. */
+/** Words grouped into lines (by . ? !, a pause, or length), as word index ranges. */
 function sentencesOf(words: Word[]): Array<{ from: number; to: number; text: string }> {
   const out: Array<{ from: number; to: number; text: string }> = [];
   let from = 0;
   words.forEach((w, i) => {
-    if (/[.?!]["'”]?$/.test(w.text.trim()) || i === words.length - 1) {
+    const next = words[i + 1];
+    if (/[.?!।]["'”]?$/.test(w.text.trim()) || !next || next.start - w.end > LINE_GAP || i - from + 1 >= LINE_WORDS) {
       out.push({ from, to: i, text: words.slice(from, i + 1).map((x) => x.text).join("").trim() });
       from = i + 1;
     }
@@ -210,15 +214,14 @@ export function ClipEditor({
     if (ops.pauses !== null) next.trimPauses = ops.pauses;
     if (ops.captions !== null) next.captionStyle = ops.captions ? undefined : null;
     for (const l of ops.layout) next = layoutFor([span(l.from)[0], span(l.to)[1]], l.mode, next);
-    return {
-      edit: next,
-      start: ops.start ? span(ops.start)[0] - 0.03 : s.start,
-      end: ops.end ? span(ops.end)[1] + 0.1 : s.end,
-    };
+    // Times are seconds from the current start; the start may move before the rendered part.
+    const from = ops.startAt !== null ? Math.max(0, s.start + ops.startAt) : ops.start ? span(ops.start)[0] - 0.03 : s.start;
+    const to = ops.endAt !== null ? s.start + ops.endAt : ops.end ? span(ops.end)[1] + 0.1 : s.end;
+    return { edit: next, start: from, end: to > from + 1 ? to : s.end };
   };
 
   const askAi = async (request: string) => {
-    if (!request.trim() || thinking || !sentences.length) return;
+    if (!request.trim() || thinking || words === null) return;
     setChat((c) => [...c, { who: "you", text: request }]);
     setAsk("");
     setThinking(true);
@@ -230,7 +233,7 @@ export function ClipEditor({
         body: JSON.stringify({
           request: req,
           seconds: lengthOf(s),
-          sentences: sentences.map((x) => ({ text: x.text, removed: all.slice(x.from, x.to + 1).every((w) => isCut(w, s.edit.removed ?? []) || w.start < s.start - 0.05 || w.end > s.end + 0.05) })),
+          sentences: sentences.map((x) => ({ text: x.text, at: Math.round((all[x.from].start - s.start) * 10) / 10, removed: all.slice(x.from, x.to + 1).every((w) => isCut(w, s.edit.removed ?? []) || w.start < s.start - 0.05 || w.end > s.end + 0.05) })),
         }),
       });
       const body = await res.json();
@@ -245,9 +248,15 @@ export function ClipEditor({
         ops = await call(`It is now ${Math.round(lengthOf(next))} seconds, still too long. Cut more so it is about ${target} seconds.`, next);
         next = applyOps(next, ops);
       }
-      push(next);
+      const before = Math.round(lengthOf(state));
       const len = Math.round(lengthOf(next));
-      setChat((c) => [...c, { who: "ai", text: `${ops.reply || "Done."} Clip is now ${clock(len)}.${target && len > target * 1.15 ? " Still a bit long: cut more in the transcript, or ask again." : ""}` }]);
+      const same = next.start === state.start && next.end === state.end && JSON.stringify(next.edit) === JSON.stringify(state.edit);
+      if (same) {
+        setChat((c) => [...c, { who: "ai", text: `${ops.reply || "I couldn't tell what to change."} Nothing changed. Try a time, like "end at 0:29" or "start 3 seconds earlier".` }]);
+        return;
+      }
+      push(next);
+      setChat((c) => [...c, { who: "ai", text: `${ops.reply || "Done."} ${clock(before)} → ${clock(len)}. Press play to check, then Save & render.${target && len > target * 1.15 ? " Still a bit long: cut more in the transcript, or ask again." : ""}` }]);
     } catch (err) {
       setChat((c) => [...c, { who: "ai", text: err instanceof Error ? err.message : String(err) }]);
     } finally {
@@ -406,6 +415,12 @@ export function ClipEditor({
                       <Sparkles className="mx-auto text-zinc-600" size={28} />
                       <p className="mt-3 text-sm text-zinc-300">Tell the AI what to change</p>
                       <p className="mt-1 text-xs text-zinc-500">It edits the clip; you can undo anything or fine-tune it in Transcript.</p>
+                      <div className="mx-auto mt-4 max-w-sm space-y-1.5 rounded-xl bg-white/[0.03] p-3 text-left text-xs text-zinc-400 ring-1 ring-white/[0.06]">
+                        <p><span className="text-zinc-200">Times work best:</span> &ldquo;end at 0:29&rdquo;, &ldquo;start 3 seconds earlier&rdquo;, &ldquo;keep the first 30 seconds&rdquo;. Times count from the clip&apos;s start, as on the player.</p>
+                        <p><span className="text-zinc-200">By what&apos;s said:</span> &ldquo;cut line 2&rdquo; or &ldquo;end it properly&rdquo;. Line numbers are in the Transcript tab.</p>
+                        <p><span className="text-zinc-200">Switches:</span> hook, captions, ums, pauses, zoom out.</p>
+                        <p>Nothing renders until you press <span className="text-zinc-200">Save &amp; render</span>. Undo puts anything back.</p>
+                      </div>
                       <div className="mt-5 flex flex-wrap justify-center gap-2">
                         {SUGGESTIONS.map((s) => (
                           <button key={s} className={chip} onClick={() => askAi(s)} disabled={thinking}>
@@ -437,7 +452,7 @@ export function ClipEditor({
                   <input
                     value={ask}
                     onChange={(e) => setAsk(e.target.value)}
-                    placeholder="e.g. cut the part about school, make it 40 seconds"
+                    placeholder="e.g. end at 0:29, or start 3 seconds earlier"
                     aria-label="What should the AI change?"
                     className="min-w-0 flex-1 bg-transparent px-2.5 text-sm text-zinc-100 placeholder:text-zinc-600 focus:outline-none"
                   />
@@ -552,8 +567,9 @@ export function ClipEditor({
                 </div>
                 <p className="mb-3 text-[11px] text-zinc-600">Click a word to jump there; shift-click to select a stretch.</p>
                 <div className="space-y-3 text-[15px] leading-8">
-                  {sentences.map((s) => (
+                  {sentences.map((s, n) => (
                     <p key={s.from}>
+                      <span className="mr-1.5 select-none text-[11px] tabular-nums text-zinc-600">{n + 1}</span>
                       {all.slice(s.from, s.to + 1).map((w, k) => {
                         const i = s.from + k;
                         const out = !inClip(w);
