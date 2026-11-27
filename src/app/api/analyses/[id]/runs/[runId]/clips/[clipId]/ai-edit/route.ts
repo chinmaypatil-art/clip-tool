@@ -1,18 +1,24 @@
 import { NextRequest, NextResponse } from "next/server";
-import { loadAnalysis } from "@/lib/analyses";
-import { buildAiEditPrompt, clauses, mergeOps, parseAiEdit, ruleEdit, type AiEditOps } from "@/lib/aiEdit";
+import { analysisDir, loadAnalysis } from "@/lib/analyses";
+import { buildAiEditPrompt, emptyOps, clauses, mergeOps, parseAiEdit, ruleEdit, type AiEditOps } from "@/lib/aiEdit";
 import { createLimiter } from "@/lib/limit";
 import { processSingleton } from "@/lib/processState";
 import { ensureOllama } from "@/lib/ollamaHealth";
 import { getLocalJsonChat } from "@/lib/providers/registry";
 import { CLIP_PICKER } from "@/lib/analysisPipeline";
+import { findMomentEnd } from "@/lib/screenClips";
+import path from "path";
+
+// "end it properly", "fix the ending", "end when it's over": judged from the picture.
+const END_PROPERLY = /\b(end|ending|finish|stop)\b.*\b(properly|proper|right|correctly|clean(ly)?|better|naturally|fix|when|after|over|done)\b|\bfix (the|its) end(ing)?\b/i;
 
 // The same one-at-a-time GPU queue clip picking and Whisper use.
 const gpuSlot = processSingleton("gpuSlot", () => createLimiter(1));
 
 /**
  * Ask AI: turns the editor's request into edit operations on the clip's
- * numbered lines or in seconds. Body: { request, sentences: [{text, removed, at}], seconds }.
+ * numbered lines or in seconds. Body: { request, sentences: [{text, removed, at}], seconds, start, end }
+ * (start/end: the editor's current edges in source seconds).
  * Nothing is saved here; the editor applies the answer to its edit list.
  */
 export async function POST(
@@ -43,6 +49,23 @@ export async function POST(
     const ops = ruleEdit(c, Math.max(1, sentences.length), seconds);
     if (ops) parts.push(ops);
     else rest.push(c);
+  }
+  // Ending by the picture: the words alone can't tell when a catch or a goal is over.
+  const clipStart = Number(body?.start);
+  const clipEnd = Number(body?.end);
+  const endAsk = rest.findIndex((c) => END_PROPERLY.test(c));
+  if (endAsk >= 0 && Number.isFinite(clipStart) && clipEnd > clipStart) {
+    try {
+      await ensureOllama();
+      const source = path.join(analysisDir(id), "source.mp4");
+      const found = await gpuSlot(() => findMomentEnd(source, clipStart, clipEnd, CLIP_PICKER.model));
+      if (found) {
+        rest.splice(endAsk, 1);
+        parts.push({ ...emptyOps(), endAt: found.end - clipStart, reply: `Looked at the picture: now ends ${found.why}.` });
+      }
+    } catch (err) {
+      console.error("[ai-edit] frame check failed:", err);
+    }
   }
   if (rest.length && !sentences.length) {
     return NextResponse.json({

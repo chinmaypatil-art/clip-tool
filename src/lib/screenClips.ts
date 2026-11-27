@@ -35,8 +35,7 @@ const PROMPT = `This is one frame from a video. Is it the actual video content, 
 
 Return JSON {"kind": "content"} or {"kind": "ad"}.`;
 
-async function frames(sourcePath: string, start: number, length: number): Promise<{ times: number[]; images: string[] }> {
-  const step = Math.max(MIN_STEP_SECONDS, length / MAX_FRAMES);
+async function frames(sourcePath: string, start: number, length: number, step = Math.max(MIN_STEP_SECONDS, length / MAX_FRAMES)): Promise<{ times: number[]; images: string[] }> {
   const dir = await mkdtemp(path.join(tmpdir(), "clipwise-screen-"));
   try {
     const times: number[] = [];
@@ -133,4 +132,79 @@ export async function screenClips<T extends Pick>(sourcePath: string, picks: T[]
     kept.push({ ...pick, startSeconds: start, endSeconds: end });
   }
   return kept;
+}
+
+// "End it properly": frames over most of the clip and a little past its end.
+// Most of the clip: the moment may be over long before the current end.
+const END_LOOK_SHARE = 0.75;
+const END_LOOK_AFTER = 10;
+const END_FRAMES = 16;
+
+type Beat = "play" | "result" | "reaction" | "idle" | "break";
+
+const BEAT_PROMPT = `This is one frame from a video clip. Which ONE describes it best?
+
+"play": the action itself, while it is happening: a ball being bowled, hit, thrown, kicked or caught; players running for the ball; a rally, raid, trick or stunt; someone in the middle of doing the clip's main thing.
+"result": a graphic or screen showing what happened (OUT, WICKET, SIX, FOUR, GOAL, a score change), or a replay of the action.
+"reaction": people reacting to what just happened: celebrating, hugging, high-fives, shouting, a crowd cheering, someone laughing or shocked.
+"idle": nothing is happening: people walking, standing or waiting, a batter walking in or out or adjusting gloves or bat, a new player walking in, players getting ready for the next ball or play, a close-up of one person doing nothing, an empty field.
+"break": an ad, a channel logo or intro, a sponsor or "subscribe" screen, a studio, a blank or frozen screen.
+
+Return JSON {"beat": "play" | "result" | "reaction" | "idle" | "break"}.`;
+
+async function beatOf(model: string, image: string): Promise<Beat | null> {
+  try {
+    const res = await fetch(OLLAMA_CHAT, {
+      method: "POST",
+      signal: AbortSignal.timeout(120_000),
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model,
+        messages: [{ role: "user", content: BEAT_PROMPT, images: [image] }],
+        format: "json",
+        stream: false,
+        options: { temperature: 0, num_ctx: 4096 },
+      }),
+    });
+    if (!res.ok) return null;
+    const body = (await res.json()) as { message?: { content?: string } };
+    const beat = JSON.parse(body.message?.content ?? "{}").beat;
+    return ["play", "result", "reaction", "idle", "break"].includes(beat) ? beat : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Where a clip's moment visibly finishes, for "end it properly" in Ask AI:
+ * local Gemma labels frames around the end (play, result, reaction, idle,
+ * break); the clip ends after the last result or reaction that follows the
+ * action, before two idle/break frames in a row. Returns the new end in
+ * source seconds and what it saw, or null if it can't tell.
+ */
+export async function findMomentEnd(sourcePath: string, start: number, end: number, model: string): Promise<{ end: number; why: string } | null> {
+  const from = Math.max(start + 3, end - Math.max(15, (end - start) * END_LOOK_SHARE));
+  const length = end + END_LOOK_AFTER - from;
+  const { times, images } = await frames(sourcePath, from, length, length / END_FRAMES);
+  if (images.length < 3) return null;
+  const beats: Array<Beat | null> = [];
+  for (const image of images) beats.push(await beatOf(model, image));
+  if (process.env.SCREEN_DEBUG) console.log("[findMomentEnd]", times.map((t, i) => `${(from + t - start).toFixed(0)}s:${beats[i]}`).join(" "));
+
+  const moving = (b: Beat | null) => b === "play" || b === "result" || b === "reaction";
+  let last = -1;
+  let seenPlay = false;
+  for (let i = 0; i < beats.length; i++) {
+    if (beats[i] === "play") seenPlay = true;
+    if (moving(beats[i])) last = i;
+    // Two dull frames in a row after the action: the moment is over.
+    else if (seenPlay && last >= 0 && i + 1 < beats.length && !moving(beats[i + 1])) break;
+  }
+  if (last < 0) return null;
+  const step = times.length > 1 ? times[1] - times[0] : 1;
+  const beat = beats[last];
+  return {
+    end: from + times[last] + step / 2,
+    why: beat === "result" ? "after the result is shown" : beat === "reaction" ? "after the reaction" : "after the action",
+  };
 }

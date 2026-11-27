@@ -233,6 +233,8 @@ export function ClipEditor({
         body: JSON.stringify({
           request: req,
           seconds: lengthOf(s),
+          start: s.start,
+          end: s.end,
           sentences: sentences.map((x) => ({ text: x.text, at: Math.round((all[x.from].start - s.start) * 10) / 10, removed: all.slice(x.from, x.to + 1).every((w) => isCut(w, s.edit.removed ?? []) || w.start < s.start - 0.05 || w.end > s.end + 0.05) })),
         }),
       });
