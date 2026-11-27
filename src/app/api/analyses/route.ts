@@ -146,7 +146,7 @@ async function startVideo(req: NextRequest) {
   return NextResponse.json({ error: "Unsupported content type." }, { status: 400 });
 }
 
-function applySettings(id: string, body: { clipLength?: unknown; clipCount?: unknown; captions?: unknown; captionStyle?: unknown; focus?: unknown; picker?: unknown }) {
+function applySettings(id: string, body: { clipLength?: unknown; clipCount?: unknown; captions?: unknown; captionStyle?: unknown; focus?: unknown; picker?: unknown; language?: unknown }) {
   // Goes into the model's prompt: one short line, no quotes to break out of it.
   const focus = typeof body.focus === "string" ? body.focus.replace(/["\s]+/g, " ").trim().slice(0, 120) : "";
   updateAnalysis(id, {
@@ -156,5 +156,6 @@ function applySettings(id: string, body: { clipLength?: unknown; clipCount?: unk
     clipCount: parseClipCount(body.clipCount),
     captionStyle: body.captions === false ? null : parseCaptionStyle(body.captionStyle),
     picker: body.picker === "claude" ? "claude" : undefined,
+    spokenLanguage: body.language === "en" || body.language === "hi" || body.language === "mr" ? body.language : undefined,
   });
 }

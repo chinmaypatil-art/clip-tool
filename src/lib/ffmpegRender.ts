@@ -34,6 +34,8 @@ const DENOISE = "highpass=f=80,afftdn=nr=10:nf=-40,acompressor=threshold=-20dB:r
 // Reels/Shorts loudness: -14 LUFS. Peaks aim at -2.5 dB because AAC encoding
 // pushed a -1.5 target up to -0.4.
 const LOUDNESS = "I=-14:TP=-2.5:LRA=11";
+// Clips with little talk keep their natural dynamics, a touch quieter.
+const AMBIENT_LOUDNESS = "I=-16:TP=-2:LRA=18";
 
 /**
  * Two-pass loudnorm: one-pass only reached -16.4 LUFS on a 60 s test clip,
@@ -41,19 +43,23 @@ const LOUDNESS = "I=-14:TP=-2.5:LRA=11";
  * to one-pass if the measurement can't be read. loudnorm works at 192 kHz,
  * so resample back to 48 kHz.
  */
-async function audioCleanup(segmentPath: string): Promise<string> {
+async function audioCleanup(segmentPath: string, ambient: boolean): Promise<string> {
+  // Kitchen, crowd or game sound is the content: no denoise (it turns sizzle
+  // watery) and no compressor (it pumps the noise up between sounds).
+  const shape = ambient ? "highpass=f=40" : DENOISE;
+  const target = ambient ? AMBIENT_LOUDNESS : LOUDNESS;
   try {
     const { stderr } = await execFileAsync(
       getFfmpegPath(),
-      ["-hide_banner", "-nostats", "-i", segmentPath, "-vn", "-af", `${DENOISE},loudnorm=${LOUDNESS}:print_format=json`, "-f", "null", "-"],
+      ["-hide_banner", "-nostats", "-i", segmentPath, "-vn", "-af", `${shape},loudnorm=${target}:print_format=json`, "-f", "null", "-"],
       { maxBuffer: 16 * 1024 * 1024 }
     );
     const m = JSON.parse(stderr.slice(stderr.lastIndexOf("{"), stderr.lastIndexOf("}") + 1));
     const measured = `measured_I=${m.input_i}:measured_TP=${m.input_tp}:measured_LRA=${m.input_lra}:measured_thresh=${m.input_thresh}:offset=${m.target_offset}`;
     if (![m.input_i, m.input_tp, m.input_lra, m.input_thresh, m.target_offset].every((v) => Number.isFinite(Number(v)))) throw new Error("no measurement");
-    return `${DENOISE},loudnorm=${LOUDNESS}:${measured}:linear=true,aresample=48000`;
+    return `${shape},loudnorm=${target}:${measured}:linear=true,aresample=48000`;
   } catch {
-    return `${DENOISE},loudnorm=${LOUDNESS},aresample=48000`;
+    return `${shape},loudnorm=${target},aresample=48000`;
   }
 }
 
@@ -68,6 +74,8 @@ export interface FfmpegRenderInput {
   framing: FramingSegment[];
   /** Pictures shown full-screen over these output seconds, under the captions. */
   broll?: Array<{ path: string; fromSeconds: number; toSeconds: number }>;
+  /** Little talk (cooking, sport): the sound is kept natural instead of cleaned up like a voice. */
+  ambient?: boolean;
 }
 
 let nvencOk: Promise<boolean> | null = null;
@@ -259,7 +267,7 @@ export async function renderClipFfmpeg(input: FfmpegRenderInput): Promise<void> 
       `[bv${i}][br${i}]overlay=0:0:shortest=1:enable='between(t,${b.fromSeconds.toFixed(3)},${b.toSeconds.toFixed(3)})'[bv${i + 1}]`,
     ]),
     `[bv${broll.length}]${captions ? `ass='${filterPath(assPath)}',` : ""}format=yuv420p[vout]`,
-    `[0:a]${await audioCleanup(input.segmentPath)},afade=t=in:d=${FADE_IN_SECONDS},afade=t=out:st=${Math.max(0, d - FADE_OUT_SECONDS).toFixed(3)}:d=${FADE_OUT_SECONDS}[aout]`,
+    `[0:a]${await audioCleanup(input.segmentPath, input.ambient ?? false)},afade=t=in:d=${FADE_IN_SECONDS},afade=t=out:st=${Math.max(0, d - FADE_OUT_SECONDS).toFixed(3)}:d=${FADE_OUT_SECONDS}[aout]`,
   ].join(";\n");
   if (captions) await writeFile(assPath, buildAss(input.captionPages, input.captionStyle ?? DEFAULT_CAPTION_STYLE, input.framing));
   await writeFile(graphPath, graph);

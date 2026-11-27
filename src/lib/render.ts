@@ -75,6 +75,8 @@ export interface RenderClipInput {
   captionStyle?: CaptionStyle | null;
   /** Pictures over the clip; only the ffmpeg renderer draws them. */
   broll?: Array<{ path: string; fromSeconds: number; toSeconds: number }>;
+  /** Little talk: keep the natural sound (ffmpeg renderer only). */
+  ambient?: boolean;
   onProgress?: (progress: number) => void;
   /** Called when this clip leaves the render queue and starts rendering. */
   onStart?: () => void;

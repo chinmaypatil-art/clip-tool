@@ -453,6 +453,23 @@ export function dropRepeats(captions: Caption[]): Caption[] {
 
 const FILLERS = new Set(["uh", "uhh", "um", "umm", "uhm", "hmm", "hm", "mm", "mhm", "er", "erm", "ah", "eh"]);
 
+/**
+ * Whisper fed sizzling, crowd or engine noise "hears" a few words over and
+ * over ("kar do kar do kar do"). Any 8-word stretch with 3 or fewer different
+ * words is that loop, not speech.
+ */
+export function dropLoops(captions: Caption[], window = 8, maxDistinct = 3): Caption[] {
+  const key = (c: Caption) => c.text.toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
+  const junk = new Set<number>();
+  for (let i = 0; i + window <= captions.length; i++) {
+    const words = captions.slice(i, i + window).map(key);
+    if (new Set(words).size > maxDistinct) continue;
+    // Only the looping words: a real word at the window's edge stays.
+    for (let k = i; k < i + window; k++) if (words.filter((w) => w === words[k - i]).length > 1) junk.add(k);
+  }
+  return captions.filter((_, i) => !junk.has(i));
+}
+
 /** Hesitation sounds ("uh", "um") never belong in a caption. */
 export function dropFillers(captions: Caption[]): Caption[] {
   return captions.filter((c) => !FILLERS.has(c.text.toLowerCase().replace(/[^\p{L}]/gu, "")));
@@ -528,7 +545,7 @@ export async function transcribeWav(
     const hinglish = !LANGUAGE_OVERRIDE && (language === "hi" || language === "mr");
     const prompt = language === "hi" && !LANGUAGE_OVERRIDE ? HINGLISH_PROMPT : null;
     const words = await transcribeWords(wavPath, language as Language, prompt);
-    const complete = dropEchoes(dropFillers(dropRepeats(fill ? await fillGaps(wavPath, words, language as Language, prompt) : words)));
+    const complete = dropLoops(dropEchoes(dropFillers(dropRepeats(fill ? await fillGaps(wavPath, words, language as Language, prompt) : words))));
     return hinglish && romanizer ? await romanize(complete, romanizer, reference) : complete;
   } catch (err) {
     throw new WhisperError(`whisper.cpp transcription failed for "${wavPath}": ${describeError(err)}`, err);

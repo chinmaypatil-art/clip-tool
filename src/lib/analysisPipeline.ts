@@ -130,7 +130,7 @@ export async function runTranscriptExtraction(
     // No gap re-checks either: each gap costs ~35 s (a 66-min video spent 30+ min
     // on them), and every picked clip is re-transcribed with them anyway.
     const captions = await gpuSlot(
-      () => transcribeWav(wavPath, { romanizer: null, fillGaps: false, onLanguage: (spokenLanguage) => updateAnalysis(analysisId, { spokenLanguage }) }),
+      () => transcribeWav(wavPath, { romanizer: null, fillGaps: false, language: getAnalysis(analysisId)?.spokenLanguage, onLanguage: (spokenLanguage) => updateAnalysis(analysisId, { spokenLanguage }) }),
       (ahead) => updateAnalysis(analysisId, { queueAhead: ahead || undefined })
     );
     const segments = captionsToSegments(captions);
@@ -194,6 +194,8 @@ export function hasUsableSpeech(segments: TranscriptSegment[], durationSeconds: 
  * footage with no useful transcript). Saved as a finished run; like the
  * one-click flow, the user chooses which ones to render.
  */
+const AMBIENT_WORDS_PER_MINUTE = 30;
+
 export function addPickedClips(analysisId: string, picker: string, picked: NormalizedClip[]): string {
   const analysis = getAnalysis(analysisId);
   const clipLength = analysis?.clipLength ?? DEFAULT_CLIP_LENGTH;
@@ -609,6 +611,14 @@ export async function renderAnalysisClip(analysisId: string, runId: string, clip
     } catch (err) {
       console.error(`[analysisPipeline] caption generation failed for ${analysisId}/${runId}/${clipId}:`, err);
     }
+    // Under 30 real words a minute the clip is action, not talk (a burger
+    // clip's "speech" was whisper hearing words in the sizzle): no captions,
+    // and the sound stays natural.
+    const ambient = captionStyle !== null && captions.length < (clipLength / 60) * AMBIENT_WORDS_PER_MINUTE;
+    if (ambient && captions.length) {
+      console.log(`[analysisPipeline] ${clipId.slice(0, 8)}: ${captions.length} words in ${Math.round(clipLength)} s, captions left off`);
+      captions = [];
+    }
 
     // Bundling copies the whole folder, source included: only do it when the
     // ffmpeg renderer fails and Remotion is needed.
@@ -668,6 +678,7 @@ export async function renderAnalysisClip(analysisId: string, runId: string, clip
       title: clip.title,
       captionPages,
       captionStyle,
+      ambient,
       framing,
       segmentPath,
       broll: (userEdit.broll ?? []).flatMap((b) =>

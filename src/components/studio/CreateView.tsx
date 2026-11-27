@@ -17,9 +17,20 @@ interface Settings {
   captionStyle: CaptionStyle;
   /** "auto": Gemma when there is speech, else Claude. "claude": Claude always. */
   picker: "auto" | "claude";
+  language: Language;
 }
 
-const DEFAULT_SETTINGS: Settings = { clipLength: DEFAULT_CLIP_LENGTH, clipCount: DEFAULT_CLIP_COUNT, captions: true, captionStyle: DEFAULT_CAPTION_STYLE, picker: "auto" };
+// What the video's speech is in. Auto lets whisper guess, which can mistake
+// noise (sizzling, crowds) for Hindi.
+const LANGUAGES = [
+  ["auto", "Auto"],
+  ["en", "English"],
+  ["hi", "Hindi"],
+  ["mr", "Marathi"],
+] as const;
+type Language = (typeof LANGUAGES)[number][0];
+
+const DEFAULT_SETTINGS: Settings = { clipLength: DEFAULT_CLIP_LENGTH, clipCount: DEFAULT_CLIP_COUNT, captions: true, captionStyle: DEFAULT_CAPTION_STYLE, picker: "auto", language: "auto" };
 
 function loadSettings(): Settings {
   const fallback = DEFAULT_SETTINGS;
@@ -32,6 +43,7 @@ function loadSettings(): Settings {
       captions: raw.captions !== false,
       captionStyle: parseCaptionStyle(raw.captionStyle),
       picker: raw.picker === "claude" ? "claude" : "auto",
+      language: LANGUAGES.some(([k]) => k === raw.language) ? raw.language : "auto",
     };
   } catch {
     return fallback;
@@ -239,6 +251,20 @@ export function CreateView({ onStarted }: { onStarted: (analysisId: string) => v
             ))}
           </div>
         </div>
+        <label className="flex items-center gap-2">
+          <span className="text-zinc-500">Language</span>
+          <select
+            value={settings.language}
+            onChange={(e) => update({ language: e.target.value as Language })}
+            className="glass rounded-full px-3 py-1 text-xs text-white focus:outline-none"
+          >
+            {LANGUAGES.map(([key, label]) => (
+              <option key={key} value={key} className="bg-zinc-900">
+                {label}
+              </option>
+            ))}
+          </select>
+        </label>
         <div className="flex items-center gap-2">
           <span className="text-zinc-500">Captions</span>
           <button
