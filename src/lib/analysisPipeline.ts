@@ -184,7 +184,7 @@ export async function runTranscriptExtraction(
     // No gap re-checks either: each gap costs ~35 s (a 66-min video spent 30+ min
     // on them), and every picked clip is re-transcribed with them anyway.
     const captions = await gpuSlot(
-      () => transcribeWav(wavPath, { romanizer: null, fillGaps: false, language: getAnalysis(analysisId)?.spokenLanguage, onLanguage: (spokenLanguage) => updateAnalysis(analysisId, { spokenLanguage }) }),
+      () => transcribeWav(wavPath, { romanizer: null, fillGaps: false, languageModel: false, language: getAnalysis(analysisId)?.spokenLanguage, onLanguage: (spokenLanguage) => updateAnalysis(analysisId, { spokenLanguage }) }),
       (ahead) => updateAnalysis(analysisId, { queueAhead: ahead || undefined })
     );
     const segments = captionsToSegments(captions);

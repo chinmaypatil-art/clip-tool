@@ -66,6 +66,12 @@ const WHISPER_MODEL: WhisperModel = SUPPORTED_MODELS.includes(process.env.WHISPE
   ? (process.env.WHISPER_MODEL as WhisperModel)
   : "large-v3-turbo";
 
+// Marathi: AI4Bharat's IndicWhisper (Vistaar, MIT), Whisper medium trained on
+// Marathi, converted to ggml. Stock Whisper loops on Marathi commentary
+// ("प्रेशर चाहिए प्रेशर चाहिए…"); this one writes what was said. Used only when
+// the file is there; otherwise Marathi falls back to the main model.
+const MARATHI_MODEL = path.join(MODELS_DIR, "marathi", "ggml-medium.bin");
+
 // English, Hindi and Hinglish audio is transcribed with Whisper's Hindi
 // setting plus a short romanised-Hinglish prompt, then romanised. Auto mode
 // labels code-mixed Hinglish as English and *translates* the Hindi parts (or
@@ -204,11 +210,13 @@ async function onBestDevice<T>(task: (device: Device) => Promise<T>): Promise<T>
   }
 }
 
-async function runWhisper(device: Device, wavPath: string, language: Language, prompt: string | null): Promise<Caption[]> {
+async function runWhisper(device: Device, wavPath: string, language: Language, prompt: string | null, languageModel: boolean): Promise<Caption[]> {
   await Promise.all([ensureRuntime(device), ensureModel()]);
+  const marathi = languageModel && language === "mr" && existsSync(MARATHI_MODEL);
   const output = await whisperTranscribe({
-    model: WHISPER_MODEL,
-    modelFolder: MODELS_DIR,
+    // Named "medium" so word timing (--dtw) uses the medium preset it was trained from.
+    model: marathi ? "medium" : WHISPER_MODEL,
+    modelFolder: marathi ? path.dirname(MARATHI_MODEL) : MODELS_DIR,
     whisperPath: runtimeDir(device),
     whisperCppVersion: WHISPER_CPP_VERSION,
     inputPath: wavPath,
@@ -222,7 +230,11 @@ async function runWhisper(device: Device, wavPath: string, language: Language, p
     additionalArgs: ["-sow", "-nfa", "-t", String(THREADS), ...(prompt ? ["--prompt", prompt] : [])],
     printOutput: process.env.WHISPER_VERBOSE === "1",
   });
-  return alignedStarts(mergeSubwordTokens(toCaptions({ whisperCppOutput: output }).captions));
+  // A Devanagari letter split across two tokens comes out as "�" (the Marathi model does this); drop the broken piece.
+  const captions = mergeSubwordTokens(toCaptions({ whisperCppOutput: output }).captions)
+    .map((c) => ({ ...c, text: c.text.replace(/�/g, "") }))
+    .filter((c) => c.text.trim());
+  return alignedStarts(captions);
 }
 
 // DTW onsets measured 0.1-0.3s after the audio onset; a caption that shows a
@@ -247,8 +259,8 @@ function alignedStarts(captions: Caption[]): Caption[] {
   });
 }
 
-function transcribeWords(wavPath: string, language: Language, prompt: string | null): Promise<Caption[]> {
-  return onBestDevice((device) => runWhisper(device, wavPath, language, prompt));
+function transcribeWords(wavPath: string, language: Language, prompt: string | null, languageModel = true): Promise<Caption[]> {
+  return onBestDevice((device) => runWhisper(device, wavPath, language, prompt, languageModel));
 }
 
 /** Language detection only (whisper-cli -dl): one encoder pass over the first 30s, no decoding. */
@@ -522,7 +534,10 @@ export async function transcribeWav(
     fillGaps: fill = true,
     language: known,
     onLanguage,
+    languageModel = true,
   }: {
+    /** false: the main model even for Marathi (whole videos: the Marathi model runs about real time, too slow for hours of audio). */
+    languageModel?: boolean;
     romanizer?: Romanizer | null;
     reference?: string;
     fillGaps?: boolean;
@@ -547,7 +562,7 @@ export async function transcribeWav(
     // English (already Latin) passes through untouched.
     const hinglish = !LANGUAGE_OVERRIDE;
     const prompt = language === "hi" && !LANGUAGE_OVERRIDE ? HINGLISH_PROMPT : null;
-    const words = await transcribeWords(wavPath, language as Language, prompt);
+    const words = await transcribeWords(wavPath, language as Language, prompt, languageModel);
     const complete = dropLoops(dropEchoes(dropFillers(dropRepeats(fill ? await fillGaps(wavPath, words, language as Language, prompt) : words))));
     return hinglish && romanizer ? await romanize(complete, romanizer, reference) : complete;
   } catch (err) {
