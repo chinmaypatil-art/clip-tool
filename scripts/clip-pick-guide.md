@@ -9,6 +9,7 @@ Picking clips yourself (picker 'claude'): you are a short-form editor watching r
 7. Never repeat a line inside a clip, and never end on a line the viewer already heard.
 8. Ending too early is the most common reason reviewers reject a clip. Never end while someone is mid-sentence, mid-laugh or mid-action, or before the reaction finishes; when unsure, end 2-3 s later, not earlier. No abrupt cut: let the last word or the celebration land.
 9. Starting mid-thought is the next one. Open where a newcomer can follow: the start of a sentence, the question, or the build-up, never "and so..." or the second half of a point.
-10. Be honest in description and reasoning: say what is visible. If the frames are too small or unclear to be sure, say so and lower viralScore.
+10. Boring is the other big reject. Each clip needs a clear payoff a stranger would care about: a result, a reveal, a strong reaction, a surprising line. Skip routine stretches (walking, setup, small talk) even if they fill the length.
+11. Be honest in description and reasoning: say what is visible. If the frames are too small or unclear to be sure, say so and lower viralScore.
 
 Be economical: a handful of wide sheets plus one close look per candidate is usually enough. Don't re-fetch stretches you already looked at.

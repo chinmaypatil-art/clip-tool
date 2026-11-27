@@ -218,14 +218,16 @@ export function addPickedClips(analysisId: string, picker: string, picked: Norma
   const clipLength = analysis?.clipLength ?? DEFAULT_CLIP_LENGTH;
   const { minSeconds } = CLIP_LENGTH_PRESETS[clipLength];
   const videoEnd = analysis?.videoDurationSeconds ?? Infinity;
-  // A pick under the chosen length is widened around its middle (the picker
-  // kept the action there) so a "1-2 min" video never gets 45 s clips.
+  // Claude's edges are kept: padding a finished moment out to the chosen
+  // length added dead ends and cut-in starts, and reviewers rejected them.
+  // Only a pick far under the length is widened, around its middle.
+  const floor = minSeconds * SHORT_TOLERANCE;
   const fitted = picked.map((c) => {
-    const short = minSeconds - (c.endSeconds - c.startSeconds);
+    const short = floor - (c.endSeconds - c.startSeconds);
     if (short <= 0) return c;
     let start = Math.max(0, c.startSeconds - short * 0.3);
-    const end = Math.min(videoEnd, start + minSeconds);
-    start = Math.max(0, end - minSeconds);
+    const end = Math.min(videoEnd, start + floor);
+    start = Math.max(0, end - floor);
     return { ...c, startSeconds: start, endSeconds: end };
   });
   const run: ModelRun = {

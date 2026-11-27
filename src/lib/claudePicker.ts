@@ -32,7 +32,7 @@ function prompt(analysisId: string): string {
     `Use the clipwise MCP to pick clips for analysisId ${analysisId}.`,
     `Follow the HOW TO PICK guide in the clipwise server instructions exactly.`,
     `Pick up to ${count} clips with get_loud_moments and get_timeline, then call submit_clips once with picker "claude-auto".`,
-    `Every clip must be ${len.minSeconds}-${len.maxSeconds} seconds long (the length the user chose): build each one around a full stretch of action, not a single moment.`,
+    `Aim for ${len.minSeconds}-${len.maxSeconds} seconds a clip (the length the user chose) by building each one around a full stretch of action, not a single moment. Never pad: if the moment or topic is over sooner, end there. A shorter complete clip beats a longer one with an irrelevant end.`,
     a?.focus ? `The user asked for: ${a.focus}.` : "",
     `Do not do anything else. Reply DONE when submitted.`,
   ].filter(Boolean).join(" ");
