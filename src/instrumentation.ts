@@ -20,6 +20,10 @@ export async function register() {
 
   const newBuild = path.join(process.cwd(), ".next-new", "BUILD_ID");
 
+  // A restart drops a running Claude pick: start it again for videos still waiting.
+  const { autoPickWithClaude } = await import("./lib/claudePicker");
+  for (const a of await listAnalyses()) if (a.waitingForClaude && !a.archived) autoPickWithClaude(a.id);
+
   setInterval(async () => {
     if (!(await readFile(newBuild, "utf8").catch(() => null))) return;
     const busy = (await listAnalyses()).some(

@@ -31,7 +31,7 @@ import {
   type AnalysisClip,
 } from "./analyses";
 import type { Provider } from "./keystore";
-import { clipLengthRange, DEFAULT_CLIP_COUNT, type ClipLengthPreset, type ClipLengthRange } from "./clipLength";
+import { CLIP_LENGTH_PRESETS, clipLengthRange, DEFAULT_CLIP_COUNT, DEFAULT_CLIP_LENGTH, type ClipLengthPreset, type ClipLengthRange } from "./clipLength";
 import type { TranscriptSegment } from "./transcript";
 import { trimTrailingQuestion, fitToMaxLength, snapToSentences, endContext, snapToSilence, reachMinLength, includeLeadQuestion } from "./clipTrim";
 
@@ -195,6 +195,20 @@ export function hasUsableSpeech(segments: TranscriptSegment[], durationSeconds: 
  * one-click flow, the user chooses which ones to render.
  */
 export function addPickedClips(analysisId: string, picker: string, picked: NormalizedClip[]): string {
+  const analysis = getAnalysis(analysisId);
+  const clipLength = analysis?.clipLength ?? DEFAULT_CLIP_LENGTH;
+  const { minSeconds } = CLIP_LENGTH_PRESETS[clipLength];
+  const videoEnd = analysis?.videoDurationSeconds ?? Infinity;
+  // A pick under the chosen length is widened around its middle (the picker
+  // kept the action there) so a "1-2 min" video never gets 45 s clips.
+  const fitted = picked.map((c) => {
+    const short = minSeconds - (c.endSeconds - c.startSeconds);
+    if (short <= 0) return c;
+    let start = Math.max(0, c.startSeconds - short * 0.3);
+    const end = Math.min(videoEnd, start + minSeconds);
+    start = Math.max(0, end - minSeconds);
+    return { ...c, startSeconds: start, endSeconds: end };
+  });
   const run: ModelRun = {
     id: randomUUID(),
     provider: "mcp",
@@ -208,8 +222,9 @@ export function addPickedClips(analysisId: string, picker: string, picked: Norma
     attempts: null,
     error: null,
     promptVersion: "mcp-vision-1",
-    clips: picked.map((c): AnalysisClip => ({ ...c, id: randomUUID(), renderStatus: "pending" })),
+    clips: fitted.map((c): AnalysisClip => ({ ...c, id: randomUUID(), renderStatus: "pending" })),
     rawResponse: picked,
+    clipLength,
   };
   addRun(analysisId, run);
   updateAnalysis(analysisId, { waitingForClaude: undefined });
