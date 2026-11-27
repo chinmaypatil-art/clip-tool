@@ -5,6 +5,7 @@ import { createLimiter } from "@/lib/limit";
 import { processSingleton } from "@/lib/processState";
 import { ensureOllama } from "@/lib/ollamaHealth";
 import { getLocalJsonChat } from "@/lib/providers/registry";
+import { CLIP_PICKER } from "@/lib/analysisPipeline";
 
 // The same one-at-a-time GPU queue clip picking and Whisper use.
 const gpuSlot = processSingleton("gpuSlot", () => createLimiter(1));
@@ -39,7 +40,8 @@ export async function POST(
     else rest.push(c);
   }
   if (rest.length) {
-    const chat = await getLocalJsonChat(run.provider, run.model);
+    // Claude's picks have no local model of their own; local Gemma edits them.
+    const chat = (await getLocalJsonChat(run.provider, run.model)) ?? (await getLocalJsonChat(CLIP_PICKER.provider, CLIP_PICKER.model));
     if (!chat) return NextResponse.json({ error: "Ask AI needs a local (Ollama) model." }, { status: 400 });
     try {
       await ensureOllama();

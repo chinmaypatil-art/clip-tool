@@ -113,6 +113,7 @@ To shorten to a length, cut the least important sentences (about 2.5 words per s
 Examples:
 "cut the bit about his dad" -> {"remove": [7, 8], "restore": [], "start": null, "end": null, "reply": "Cut the part about his dad (7-8)."}
 "start at the question about music" -> {"remove": [], "restore": [], "start": 5, "end": null, "reply": "Now starts at the music question."}
+"end it properly" / "fix the ending" -> set "end" to the sentence where the last point is finished, before any new topic or trailing line: {"remove": [], "restore": [], "start": null, "end": 9, "reply": "Now ends where his point lands (9)."}
 
 Return ONLY JSON: {"remove": [], "restore": [], "start": null, "end": null, "reply": ""}`;
 }
