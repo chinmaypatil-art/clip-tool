@@ -2,7 +2,8 @@ import { execFile } from "child_process";
 import path from "path";
 import { createLimiter } from "./limit";
 import { processSingleton } from "./processState";
-import { getAnalysis } from "./analyses";
+import { randomUUID } from "crypto";
+import { addRun, getAnalysis, updateAnalysis } from "./analyses";
 import { CLIP_LENGTH_PRESETS, DEFAULT_CLIP_LENGTH } from "./clipLength";
 
 /**
@@ -20,7 +21,11 @@ import { CLIP_LENGTH_PRESETS, DEFAULT_CLIP_LENGTH } from "./clipLength";
 const CLAUDE_BIN = process.env.CLAUDE_BIN || "claude";
 const CLAUDE_HOME = process.env.CLAUDE_HOME;
 
-const PICK_TIMEOUT_MS = 45 * 60_000;
+// Long matches need more looking; 45 min covers ~2 h of video, then 20 min an hour more.
+const pickTimeoutMs = (seconds: number | null | undefined) => Math.max(45, ((seconds ?? 0) / 3600) * 20) * 60_000;
+// A failed or empty run is tried once more, then the video says so instead of
+// waiting for Claude forever.
+const PICK_ATTEMPTS = 2;
 // One at a time: each run reads many frame sheets.
 const claudeSlot = processSingleton("claudeSlot", () => createLimiter(1));
 
@@ -38,7 +43,7 @@ function prompt(analysisId: string): string {
   ].filter(Boolean).join(" ");
 }
 
-export function autoPickWithClaude(analysisId: string): void {
+export function autoPickWithClaude(analysisId: string, attempt = 1): void {
   if (process.env.CLAUDE_AUTO_PICK === "0") return;
   void claudeSlot(
     () =>
@@ -56,7 +61,7 @@ export function autoPickWithClaude(analysisId: string): void {
           ],
           {
             cwd,
-            timeout: PICK_TIMEOUT_MS,
+            timeout: pickTimeoutMs(getAnalysis(analysisId)?.videoDurationSeconds),
             windowsHide: true,
             maxBuffer: 4 * 1024 * 1024,
             env: CLAUDE_HOME ? { ...process.env, HOME: CLAUDE_HOME, USERPROFILE: CLAUDE_HOME } : process.env,
@@ -65,6 +70,27 @@ export function autoPickWithClaude(analysisId: string): void {
             if (err) console.error(`[claudePicker] ${analysisId} failed:`, err.message, stderr.trim().slice(-300));
             else console.log(`[claudePicker] ${analysisId}: ${stdout.trim().slice(-200)}`);
             resolve();
+            // submit_clips clears waitingForClaude; still set means nothing arrived.
+            if (!getAnalysis(analysisId)?.waitingForClaude) return;
+            if (attempt < PICK_ATTEMPTS) return autoPickWithClaude(analysisId, attempt + 1);
+            const now = Date.now();
+            addRun(analysisId, {
+              id: randomUUID(),
+              provider: "mcp",
+              model: "claude-auto",
+              status: "error",
+              startedAt: now,
+              finishedAt: now,
+              durationMs: 0,
+              tokenUsage: null,
+              keyLabel: null,
+              attempts: null,
+              error: "Claude couldn't pick clips from this video. Try again, or pick with Gemma.",
+              promptVersion: "mcp-vision-1",
+              clips: [],
+              rawResponse: null,
+            });
+            updateAnalysis(analysisId, { waitingForClaude: undefined });
           }
         );
       })
