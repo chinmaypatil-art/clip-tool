@@ -11,6 +11,10 @@ const MAX_GAP = 0.8;
 const PAD = 0.1;
 // Not worth a re-cut (and its tiny risk of a bumpy edit) for less than this.
 const MIN_SAVED = 1;
+// Trimming pauses suits talk. When it would remove more than this share of a
+// clip, the clip is mostly action (cooking, sport, gameplay): keep it whole.
+// A 100 s burger clip with a few spoken lines came out 15 s long.
+const MAX_TRIMMED_SHARE = 0.3;
 const FILLER = /^(u+m+|u+h+|u+h+m+|e+r+m+|h+m+|m+h*m+|a+h+)[,.!?…]*$/i;
 
 export const isFiller = (text: string) => FILLER.test(text.trim());
@@ -39,7 +43,8 @@ export function keepRanges(words: Caption[], durationSeconds: number): KeepRange
     i === merged.length - 1 ? durationSeconds : Math.min(durationSeconds, e + PAD),
   ]);
   const kept = ranges.reduce((n, [s, e]) => n + e - s, 0);
-  return durationSeconds - kept < MIN_SAVED ? whole : ranges;
+  const saved = durationSeconds - kept;
+  return saved < MIN_SAVED || saved > durationSeconds * MAX_TRIMMED_SHARE ? whole : ranges;
 }
 
 /**
