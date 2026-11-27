@@ -42,7 +42,8 @@ function loadSettings(): Settings {
       clipCount: parseClipCount(raw.clipCount),
       captions: raw.captions !== false,
       captionStyle: parseCaptionStyle(raw.captionStyle),
-      picker: raw.picker === "claude" ? "claude" : "auto",
+      // No picker choice any more: Clipwise decides (a saved "claude" is ignored).
+      picker: "auto",
       language: LANGUAGES.some(([k]) => k === raw.language) ? raw.language : "auto",
     };
   } catch {
@@ -233,24 +234,6 @@ export function CreateView({ onStarted }: { onStarted: (analysisId: string) => v
             ))}
           </select>
         </label>
-        <div className="flex items-center gap-2">
-          <span className="text-zinc-500">Picked by</span>
-          <div className="glass flex rounded-full p-0.5">
-            {(["auto", "claude"] as const).map((p) => (
-              <button
-                key={p}
-                onClick={() => update({ picker: p })}
-                title={p === "auto" ? "Gemma reads the speech; videos with almost no speech go to Claude" : "Claude watches the video and picks"}
-                className={cn(
-                  "rounded-full px-3 py-1 text-xs transition-colors",
-                  settings.picker === p ? "seg-on" : "text-zinc-400 hover:text-zinc-200"
-                )}
-              >
-                {p === "auto" ? "Auto" : "Claude"}
-              </button>
-            ))}
-          </div>
-        </div>
         <label className="flex items-center gap-2">
           <span className="text-zinc-500">Language</span>
           <select
