@@ -32,6 +32,7 @@ import {
   type Analysis,
 } from "./analyses";
 import type { Provider } from "./keystore";
+import { screenClips } from "./screenClips";
 import { CLIP_LENGTH_PRESETS, clipLengthRange, DEFAULT_CLIP_COUNT, DEFAULT_CLIP_LENGTH, type ClipLengthPreset, type ClipLengthRange } from "./clipLength";
 import type { TranscriptSegment } from "./transcript";
 import { trimTrailingQuestion, fitToMaxLength, snapToSentences, endContext, snapToSilence, reachMinLength, includeLeadQuestion } from "./clipTrim";
@@ -435,7 +436,9 @@ export async function pickClips({
   const minPick = windowed ? Math.min(LOCAL_MIN_MOMENT_SECONDS, range.minSeconds * SHORT_TOLERANCE) : range.minSeconds * SHORT_TOLERANCE;
   const picked = keepBest(clampAndDedupe(result.clips, durationSeconds, range, segments, minPick), count + SPARE_PICKS);
   const refined = await refineEdges(picked, range, segments, sourcePath, await getLocalEndChecker(provider, model));
-  const checked = await rankByCheck(refined, segments, await getLocalClipChecker(provider, model));
+  // Local pickers read only words; drop or trim picks that are really ads or logos.
+  const screened = windowed ? await screenClips(sourcePath, refined, model, range.minSeconds) : refined;
+  const checked = await rankByCheck(screened, segments, await getLocalClipChecker(provider, model));
   const final = keepBest(checked, count).map((c) => ({ ...c, startSeconds: includeLeadQuestion(c.startSeconds, c.endSeconds, segments, range.maxSeconds) }));
   return { ...result, clips: await addHooks(final, segments, await getLocalHookPicker(provider, model)) };
 }
