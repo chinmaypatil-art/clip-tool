@@ -15,20 +15,13 @@ interface Settings {
   clipCount: number;
   captions: boolean;
   captionStyle: CaptionStyle;
-  /** "auto": Gemma when there is speech, else Claude. "claude": Claude always. */
-  picker: "auto" | "claude";
+  /** Always "auto": Gemma for a clean transcript, else Claude. */
+  picker: "auto";
   language: Language;
 }
 
-// What the video's speech is in. Auto lets whisper guess, which can mistake
-// noise (sizzling, crowds) for Hindi.
-const LANGUAGES = [
-  ["auto", "Auto"],
-  ["en", "English"],
-  ["hi", "Hindi"],
-  ["mr", "Marathi"],
-] as const;
-type Language = (typeof LANGUAGES)[number][0];
+// Always "auto": whisper detects the language from the whole video's audio.
+type Language = "auto";
 
 const DEFAULT_SETTINGS: Settings = { clipLength: DEFAULT_CLIP_LENGTH, clipCount: DEFAULT_CLIP_COUNT, captions: true, captionStyle: DEFAULT_CAPTION_STYLE, picker: "auto", language: "auto" };
 
@@ -44,7 +37,8 @@ function loadSettings(): Settings {
       captionStyle: parseCaptionStyle(raw.captionStyle),
       // No picker choice any more: Clipwise decides (a saved "claude" is ignored).
       picker: "auto",
-      language: LANGUAGES.some(([k]) => k === raw.language) ? raw.language : "auto",
+      // Always detected from the audio; a saved choice is ignored.
+      language: "auto",
     };
   } catch {
     return fallback;
@@ -230,20 +224,6 @@ export function CreateView({ onStarted }: { onStarted: (analysisId: string) => v
             {Array.from({ length: CLIP_COUNT_MAX - CLIP_COUNT_MIN + 1 }, (_, i) => CLIP_COUNT_MIN + i).map((n) => (
               <option key={n} value={n} className="bg-zinc-900">
                 {n}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="flex items-center gap-2">
-          <span className="text-zinc-500">Language</span>
-          <select
-            value={settings.language}
-            onChange={(e) => update({ language: e.target.value as Language })}
-            className="glass rounded-full px-3 py-1 text-xs text-white focus:outline-none"
-          >
-            {LANGUAGES.map(([key, label]) => (
-              <option key={key} value={key} className="bg-zinc-900">
-                {label}
               </option>
             ))}
           </select>

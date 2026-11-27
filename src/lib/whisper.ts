@@ -391,6 +391,8 @@ async function fillGaps(wavPath: string, captions: Caption[], language: Language
 // Latin letters with accents ("bäťe") — Whisper's Hindi mode sometimes writes
 // romanised Hindi this way.
 const ACCENTED_LATIN = /[À-ɏḀ-ỿ]/;
+// Letters of any non-Latin script: Devanagari, Tamil, Bengali, Arabic, ...
+const NON_LATIN = /(?![\p{Script=Latin}])\p{L}/u;
 
 /** Removes accents from Latin letters ("bäťe" -> "bate"). */
 function stripAccents(text: string): string {
@@ -402,7 +404,7 @@ export type Romanizer = (words: string[], reference?: string) => Promise<Array<s
 
 /** Rewrites Devanagari (and accented Latin) words as Hinglish in Latin script, keeping one caption — and its timing — per word. */
 async function romanize(captions: Caption[], romanizer: Romanizer, reference?: string): Promise<Caption[]> {
-  if (!captions.some((c) => hasDevanagari(c.text) || ACCENTED_LATIN.test(c.text))) return captions;
+  if (!captions.some((c) => NON_LATIN.test(c.text) || ACCENTED_LATIN.test(c.text))) return captions;
   let latin: Array<string | null>;
   try {
     latin = await romanizer(captions.map((c) => c.text.trim()), reference);
@@ -540,9 +542,10 @@ export async function transcribeWav(
       }
     }
     onLanguage?.(language);
-    // Hindi and Marathi both come out in Devanagari; captions want them in
-    // the Latin spelling people type.
-    const hinglish = !LANGUAGE_OVERRIDE && (language === "hi" || language === "mr");
+    // Captions are always in Latin letters, the way people type the language:
+    // Hinglish for Hindi, Minglish for Marathi, the same for Tamil, Bengali...
+    // English (already Latin) passes through untouched.
+    const hinglish = !LANGUAGE_OVERRIDE;
     const prompt = language === "hi" && !LANGUAGE_OVERRIDE ? HINGLISH_PROMPT : null;
     const words = await transcribeWords(wavPath, language as Language, prompt);
     const complete = dropLoops(dropEchoes(dropFillers(dropRepeats(fill ? await fillGaps(wavPath, words, language as Language, prompt) : words))));

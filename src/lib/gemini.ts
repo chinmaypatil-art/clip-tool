@@ -474,7 +474,7 @@ export async function romanizeInBatches(
   await Promise.all(
     batches.map(async (start) => {
       const batch = words.slice(start, start + ROMANIZE_BATCH);
-      const prompt = `Numbered words from a Hindi, Marathi or Hinglish speech transcript, in order. Some are in Devanagari, some already in Latin script.
+      const prompt = `Numbered words from a speech transcript, in order: usually Hindi, Marathi or Hinglish, sometimes another Indian or foreign language. Some are in Devanagari or another script, some already in Latin script.
 
 Rewrite each word in Latin script the way Indians write Hinglish in Instagram/YouTube captions:
 - Marathi words: the same everyday Latin spelling Marathi speakers type ("आहे" -> "aahe", "मारलाय" -> "maarlay", "षटकार" -> "shatkar", "पुढचा" -> "pudhcha"). Never swap a word for a different word.
@@ -484,6 +484,7 @@ Rewrite each word in Latin script the way Indians write Hinglish in Instagram/Yo
 - Hindi words spelled oddly: the spelling most people would type ("juruta"/"jarurat" -> "zaroorat", "bhaaee" -> "bhai", "bakhvas" -> "bakwaas", "gya" -> "gaya").
 - "फ" is "f" in Hinglish, never "ph", except in "phir" ("तरफ" / "taraph" -> "taraf", "साफ" -> "saaf", "माफ" -> "maaf", "फ़ोन" -> "phone"); "ज़" is "z" ("ज़िंदगी" -> "zindagi").
 - Words already in Latin script: keep them; only drop stray accents ("bäťe" -> "baithe") and fix clearly broken Hinglish spellings.
+- Words in any other script (Tamil, Telugu, Kannada, Malayalam, Bengali, Gujarati, Punjabi, Urdu, Arabic, ...): the everyday Latin spelling speakers of that language type ("வணக்கம்" -> "vanakkam", "ধন্যবাদ" -> "dhonnobad"). Never translate.
 - Keep punctuation attached to its word. Never translate.
 ${
         reference
