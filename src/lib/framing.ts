@@ -22,7 +22,7 @@ import { OUTPUT_ASPECT, type FramingSegment } from "../../remotion/types";
  * - Several people who don't fit: follow whoever is talking (most movement in
  *   the lower half of the face across frames — a still photo or a listener
  *   barely moves); if nobody clearly is, letterbox so nobody gets cut.
- * - No usable face (b-roll, sports wide shots, gameplay): fill from the centre.
+ * - No usable face (b-roll, sports wide shots, gameplay): fill on the busiest part.
  *
  * Runs on CPU, so it works the same on a GPU server or a plain laptop-class box.
  */
@@ -53,8 +53,10 @@ const MIN_HOLD = 10; // and every shot lasts at least 2.5 s, so it never jitters
 // Faces narrower than this (of source width) are ~15 px in the 320 px sample:
 // too small to read lips (a wide shot picked the listener), so both stay on screen.
 const MIN_TALK_FACE = 0.08;
-// Movement (mean luma change) beside a fill crop that means hands are gesturing out of frame.
-const GESTURE_MOTION = 4;
+// Movement (mean luma change) beside a fill crop, beyond the movement inside
+// it, that means hands are gesturing out of frame. Big gestures score 20-40;
+// at 4 a talking chef zoomed out for most of every clip ("zooms too much").
+const GESTURE_MOTION = 10;
 const GESTURE_BEFORE = 2; // samples
 const GESTURE_AFTER = 8;
 
@@ -214,6 +216,7 @@ interface Person {
   right: number[];
   width: number[];
   motion: number[];
+  talk: number[];
 }
 
 const median = (xs: number[]) => {
@@ -231,7 +234,7 @@ function groupPeople(samples: Face[][]): Person[] {
       const width = f.x2 - f.x1;
       let person = people.find((p) => Math.abs(median(p.cx) - cx) < Math.max(0.06, median(p.width) * 0.8));
       if (!person) {
-        person = { cx: [], cy: [], left: [], right: [], width: [], motion: [] };
+        person = { cx: [], cy: [], left: [], right: [], width: [], motion: [], talk: [] };
         people.push(person);
       }
       person.cx.push(cx);
@@ -240,6 +243,7 @@ function groupPeople(samples: Face[][]): Person[] {
       person.right.push(f.x2);
       person.width.push(width);
       if (f.motion !== null) person.motion.push(f.motion);
+      if (f.talk !== null) person.talk.push(f.talk);
     }
   }
   return people.filter(
@@ -261,14 +265,15 @@ function focusPercent(center: number, crop: number): number {
 function decideShot(
   samples: Face[][],
   crop: number,
-  sourceAspect: number
+  sourceAspect: number,
+  noFaceFocus: () => number
 ): Pick<FramingSegment, "mode" | "focusX" | "people" | "sourceAspect"> {
   if (crop >= 1) return { mode: "fill", focusX: 50 }; // source is already at least as tall as 9:16
   const people = groupPeople(samples);
   // No face to follow (sports wide shots, food, gameplay): fill the screen
-  // from the centre, where the action usually is. Letterboxing the whole
-  // frame left a cricket pitch as a thin strip with the players too small.
-  if (people.length === 0) return { mode: "fill", focusX: 50 };
+  // on the busiest part of the picture (a sign, the dish, the players).
+  // Letterboxing the whole frame left a cricket pitch as a thin strip.
+  if (people.length === 0) return { mode: "fill", focusX: noFaceFocus() };
 
   const margin = 0.02;
   const left = Math.min(...people.map((p) => median(p.left))) - margin;
@@ -279,7 +284,14 @@ function decideShot(
   // background people, not a second speaker worth a half of the screen.
   const bySize = people.map((p) => ({ p, size: median(p.width) })).sort((a, b) => b.size - a.size);
   if (bySize[0].size >= 1.8 * bySize[1].size) {
-    return { mode: "fill", focusX: focusPercent(median(bySize[0].p.cx), crop) };
+    // Unless the closer face is a listener and a readable face further back
+    // is clearly the one talking (reviewers saw a silent person on screen).
+    const talk = (p: Person) => (p.talk.length ? p.talk.reduce((a, b) => a + b, 0) / p.talk.length : 0);
+    const talker = bySize
+      .filter(({ p, size }) => size >= MIN_TALK_FACE && p.talk.length >= 4)
+      .sort((a, b) => talk(b.p) - talk(a.p))[0]?.p;
+    const subject = talker && talker !== bySize[0].p && talk(talker) >= TALK_LEAD * talk(bySize[0].p) ? talker : bySize[0].p;
+    return { mode: "fill", focusX: focusPercent(median(subject.cx), crop) };
   }
 
   // Two (or more) people too far apart for one crop — a podcast/interview
@@ -360,7 +372,11 @@ function gestureSamples(frames: Buffer[], idx: number[], focusX: number, crop: n
     if (k === 0 || idx[k - 1] !== i - 1) return 0;
     const l = left > 0.01 ? regionChange(frames[i], frames[i - 1], px(left - band), y1, px(left), y2) : 0;
     const r = left + crop < 0.99 ? regionChange(frames[i], frames[i - 1], px(left + crop), y1, px(left + crop + band), y2) : 0;
-    return Math.max(l, r);
+    // A moving or shaky camera changes the whole picture; only movement
+    // beside the crop beyond what's inside it is hands leaving the frame
+    // (a handheld kitchen shot zoomed out for its whole 60 s).
+    const inside = regionChange(frames[i], frames[i - 1], px(left), y1, px(left + crop), y2);
+    return Math.max(0, Math.max(l, r) - inside);
   });
   const smooth = motion.map((_, i) => {
     const w = motion.slice(Math.max(0, i - TALK_SMOOTH), i + TALK_SMOOTH + 1);
@@ -371,6 +387,49 @@ function gestureSamples(frames: Buffer[], idx: number[], focusX: number, crop: n
   // after: the view is already wide when they arrive and doesn't snap back.
   const hit = smooth.map((m) => m >= GESTURE_MOTION);
   return hit.map((_, i) => hit.slice(Math.max(0, i - GESTURE_AFTER), i + GESTURE_BEFORE + 1).some(Boolean));
+}
+
+/**
+ * Where a crop with no face should sit: the window of the frame with the
+ * most detail and movement (text, a dish, players), pulled a little toward
+ * the centre so an even picture stays centred.
+ */
+function detailFocus(frames: Buffer[], idx: number[], crop: number, ox: number, cw: number, oy: number, ch: number): number {
+  const cols = new Array(IN_W).fill(0);
+  const step = Math.max(1, Math.floor(idx.length / 8));
+  const y1 = Math.max(1, Math.floor(oy));
+  const y2 = Math.min(IN_H - 1, Math.ceil(oy + ch));
+  for (let k = 0; k < idx.length; k += step) {
+    const f = frames[idx[k]];
+    const prev = k > 0 && idx[k - 1] === idx[k] - 1 ? frames[idx[k] - 1] : null;
+    for (let y = y1; y < y2; y += 2) {
+      for (let x = 1; x < IN_W - 1; x++) {
+        const i = (y * IN_W + x) * 3;
+        const l = f[i + 1];
+        let v = Math.abs(l - f[i + 4]) + Math.abs(l - f[i + 1 + IN_W * 3]);
+        if (prev) v += Math.abs(l - prev[i + 1]);
+        cols[x] += v;
+      }
+    }
+  }
+  const x0 = Math.ceil(ox);
+  const x1 = Math.floor(ox + cw);
+  const win = Math.round(crop * cw);
+  if (x1 - x0 <= win) return 50;
+  const total = cols.slice(x0, x1).reduce((a, b) => a + b, 0) || 1;
+  let best = 50;
+  let bestScore = -Infinity;
+  for (let l = x0; l + win <= x1; l += 2) {
+    let sum = 0;
+    for (let x = l; x < l + win; x++) sum += cols[x];
+    const center = (l + win / 2 - ox) / cw;
+    const score = sum / total - 0.25 * Math.abs(center - 0.5);
+    if (score > bestScore) {
+      bestScore = score;
+      best = focusPercent(center, crop);
+    }
+  }
+  return best;
 }
 
 /** Each sample's mouth movement for the two people of a split shot (null when that face wasn't found). */
@@ -458,7 +517,7 @@ export async function analyzeFraming(
   const segments: FramingSegment[] = [];
   shotStarts.forEach((from, s) => {
     const to = s + 1 < shotStarts.length ? shotStarts[s + 1] : duration;
-    const decision = decideShot(perShot[s], crop, probe.width / probe.height);
+    const decision = decideShot(perShot[s], crop, probe.width / probe.height, () => detailFocus(frames, shotSamples[s], crop, ox, cw, oy, ch));
     // A close-up whose speaker gestures out of frame zooms out to a square
     // view (blurred fill above and below) while the hands are moving. Only
     // with a speaker on screen: cooking or craft hands with no face in shot
@@ -469,8 +528,12 @@ export async function analyzeFraming(
     const speakerOnScreen = perShot[s].filter((f) => f.length > 0).length >= perShot[s].length * 0.5;
     if (decision.mode === "fill" && crop < 1 && speakerOnScreen) {
       const faceBottom = median(faces.map((f) => f.y2));
-      const runs = holdRuns(gestureSamples(frames, shotSamples[s], decision.focusX, crop, faceBottom, (x) => ox + x * cw, (y) => oy + y * ch));
-      if (runs.some((r) => r.who)) {
+      // One choice per shot: switching in and out every few seconds looked
+      // like a jittery zoom. Wide only when the hands are out most of the shot.
+      const gesturing = gestureSamples(frames, shotSamples[s], decision.focusX, crop, faceBottom, (x) => ox + x * cw, (y) => oy + y * ch);
+      const mostly = gesturing.filter(Boolean).length >= gesturing.length * 0.5;
+      const runs = [{ from: 0, to: gesturing.length, who: mostly }];
+      if (mostly) {
         const square = Math.min(1, probe.height / probe.width);
         const center = (decision.focusX / 100) * (1 - crop) + crop / 2;
         for (const r of runs) {
