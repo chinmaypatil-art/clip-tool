@@ -56,11 +56,31 @@ export async function POST(
     try {
       await ensureOllama();
       const answer = await gpuSlot(() => chat(buildAiEditPrompt(rest.join(", "), sentences, seconds), 300));
-      parts.push(parseAiEdit(answer, sentences.length));
+      parts.push(edgesFromCuts(parseAiEdit(answer, sentences.length), sentences));
     } catch (err) {
       console.error("[ai-edit] failed:", err);
       return NextResponse.json({ error: "The AI couldn't do that. Try saying it another way." }, { status: 502 });
     }
   }
   return NextResponse.json(mergeOps(parts));
+}
+
+/**
+ * The model often "ends it properly" by cutting the last lines out, which
+ * leaves the clip's end where it was (a gap, not a new ending). Cuts that
+ * reach the last (or first) line still in the clip move that edge instead.
+ */
+function edgesFromCuts(ops: AiEditOps, sentences: Array<{ removed: boolean }>): AiEditOps {
+  const live = sentences.map((s, i) => (s.removed ? 0 : i + 1)).filter(Boolean);
+  const cut = new Set(ops.remove);
+  let last = live.length - 1;
+  while (last >= 0 && cut.has(live[last])) last--;
+  let first = 0;
+  while (first <= last && cut.has(live[first])) first++;
+  if (last < 0 || first > last) return ops;
+  const out = { ...ops };
+  if (last < live.length - 1 && ops.end === null) out.end = live[last];
+  if (first > 0 && ops.start === null) out.start = live[first];
+  out.remove = ops.remove.filter((n) => n >= live[first] && n <= live[last]);
+  return out;
 }
