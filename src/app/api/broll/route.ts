@@ -8,6 +8,7 @@ import { pipeline } from "stream/promises";
 import type { ReadableStream as NodeReadableStream } from "stream/web";
 import { hasAccess } from "@/lib/access";
 import { analysisDir, loadAnalysis } from "@/lib/analyses";
+import { uploadFinished, uploadStarted } from "@/lib/activity";
 
 const TYPES: Record<string, string> = {
   "image/png": "png",
@@ -25,6 +26,16 @@ const MAX_BYTES = 1024 * 1024 * 1024;
  * Outside the proxy (it would cut bodies at 10 MB), so access is checked here.
  */
 export async function POST(req: NextRequest) {
+  // Counted as busy so the self-restart can't cut a long upload short.
+  uploadStarted();
+  try {
+    return await saveBroll(req);
+  } finally {
+    uploadFinished();
+  }
+}
+
+async function saveBroll(req: NextRequest) {
   if (!(await hasAccess(req))) return NextResponse.json({ error: "Log in first" }, { status: 401 });
   const id = req.nextUrl.searchParams.get("analysisId") ?? "";
   if (!/^[0-9a-f-]{36}$/.test(id) || !(await loadAnalysis(id))) return NextResponse.json({ error: "Analysis not found." }, { status: 404 });
