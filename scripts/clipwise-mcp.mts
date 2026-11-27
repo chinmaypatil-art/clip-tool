@@ -106,11 +106,11 @@ const fmt = (s: number) => `${Math.floor(s / 60)}:${(s % 60).toFixed(1).padStart
 
 const server = new McpServer(
   { name: "clipwise", version: "0.1.0" },
-  { instructions: `Clipwise makes short vertical clips from long videos. Two pickers. Clipwise chooses by itself: Gemma when the video has speech; otherwise the video waits for you (list_waiting).\n- gemma: make_clips(url, picker 'gemma') -> get_progress until DONE. Clipwise picks from the transcript.\n- claude (you watch it; for no speech or a useless transcript): make_clips(url, picker 'claude') -> get_progress until READY TO WATCH -> get_loud_moments + get_timeline -> submit_clips. The user renders the picks they like.\nOptional afterwards: review rendered clips with list_clips -> get_clip_pack -> submit_review. Reviews never replace the human's.\nBe efficient: get_progress waits by itself, so never poll in a loop; don't fetch the same stretch or clip pack twice; keep notes to one line.\n\nHOW TO PICK:\n${PICK_GUIDE}\n\nHOW TO REVIEW:\n${RUBRIC}` }
+  { instructions: `Clipwise makes short vertical clips from long videos. Two pickers. Clipwise chooses by itself: Gemma when the video has speech; otherwise the video waits for you (list_waiting).\n- gemma: make_clips(url, picker 'gemma') -> get_progress until DONE. Clipwise picks from the transcript.\n- claude (you watch it; for no speech or a useless transcript): make_clips(url, picker 'claude') -> get_progress until READY TO WATCH -> get_loud_moments + get_scene_changes + get_timeline -> self-check -> submit_clips. The user renders the picks they like.\nOptional afterwards: review rendered clips with list_clips -> get_clip_pack -> submit_review. Reviews never replace the human's.\nBe efficient: get_progress waits by itself, so never poll in a loop; don't fetch the same stretch or clip pack twice; keep notes to one line.\n\nHOW TO PICK:\n${PICK_GUIDE}\n\nHOW TO REVIEW:\n${RUBRIC}` }
 );
 
 server.registerTool("list_waiting", {
-  description: "Videos Clipwise could not pick by itself (almost no speech) and that wait for you to watch and pick: get_loud_moments + get_timeline, then submit_clips.",
+  description: "Videos Clipwise could not pick by itself (almost no speech) and that wait for you to watch and pick: get_loud_moments + get_scene_changes + get_timeline, then submit_clips.",
   inputSchema: {},
 }, async () => {
   const waiting = (await loadAll()).filter((a) => a.waitingForClaude && !a.archived && a.runs.length === 0).sort((x, y) => y.createdAt - x.createdAt);
@@ -251,14 +251,131 @@ function loudMoments(db: number[], top: number) {
   return picked.toSorted((x, y) => x.t - y.t);
 }
 
+const median = (xs: number[]) => xs.toSorted((x, y) => x - y)[Math.floor(xs.length / 2)] ?? -90;
+
+/** A sharp spike that drops to quiet right after: an appeal, a gasp, a near miss, a shout then silence. */
+function spikeThenSilence(db: number[]) {
+  const out: { t: number; drop: number }[] = [];
+  for (let i = 0; i < db.length - 6; i++) {
+    const jump = db[i] - median(db.slice(Math.max(0, i - 60), i + 60));
+    const after = db.slice(i + 2, i + 7).reduce((s, d) => s + d, 0) / 5;
+    const drop = db[i] - after;
+    if (jump >= 6 && drop >= 10 && out.every((o) => Math.abs(o.t - i) > 30)) out.push({ t: i, drop });
+  }
+  return out.toSorted((x, y) => y.drop - x.drop).slice(0, 20).toSorted((x, y) => x.t - y.t);
+}
+
+/** Stretches of 6 s or more well above the surrounding level: cheering, chanting, applause, music peaks. */
+function sustainedLoud(db: number[]) {
+  const out: { from: number; to: number; above: number }[] = [];
+  let start = -1;
+  let sum = 0;
+  for (let i = 0; i <= db.length; i++) {
+    const above = i < db.length ? db[i] - median(db.slice(Math.max(0, i - 90), i + 90)) : -Infinity;
+    if (above >= 4) {
+      if (start < 0) {
+        start = i;
+        sum = 0;
+      }
+      sum += above;
+    } else if (start >= 0) {
+      if (i - start >= 6) out.push({ from: start, to: i, above: sum / (i - start) });
+      start = -1;
+    }
+  }
+  return out.toSorted((x, y) => y.above * (y.to - y.from) - x.above * (x.to - x.from)).slice(0, 20).toSorted((x, y) => x.from - y.from);
+}
+
 server.registerTool("get_loud_moments", {
-  description: "For picker 'claude': the moments where the sound jumps well above its surroundings (crowd, shouting, excited commentary), across the whole video. A cheap map of where things happen; check each with get_timeline. The first call on a long video takes a few minutes (it measures the audio once).",
+  description: "For picker 'claude': a cheap audio map of the whole video: where the sound jumps above its surroundings (crowd, shouting, excited commentary), sharp spikes followed by sudden silence (appeals, gasps, near misses), and sustained loud stretches (cheering, applause, music peaks). Check candidates with get_timeline. The first call on a long video takes a few minutes (it measures the audio once).",
   inputSchema: { analysisId: z.string(), top: z.number().int().min(5).max(80).default(40) },
 }, async ({ analysisId, top }) => {
   const a = await load(analysisId);
   const db = await loudness(a);
   const lines = loudMoments(db, top).map((m) => `${hms(m.t)} (${m.t}s) +${m.jump.toFixed(1)} dB`);
-  return { content: [txt(`Video length ${hms(db.length)}. Loudest jumps over the surrounding 2 minutes, in time order:\n${lines.join("\n") || "none (flat audio)"}`)] };
+  const spikes = spikeThenSilence(db).map((s) => `${hms(s.t)} (${s.t}s) then ${s.drop.toFixed(0)} dB quieter`);
+  const cheers = sustainedLoud(db).map((c) => `${hms(c.from)}-${hms(c.to)} (${c.from}-${c.to}s, ${c.to - c.from}s long) +${c.above.toFixed(1)} dB`);
+  return {
+    content: [txt([
+      `Video length ${hms(db.length)}.`,
+      `Loudest jumps over the surrounding 2 minutes, in time order:\n${lines.join("\n") || "none (flat audio)"}`,
+      `Spike then sudden silence (appeals, gasps, near misses):\n${spikes.join("\n") || "none"}`,
+      `Sustained loud stretches (cheering, chanting, applause, music peaks):\n${cheers.join("\n") || "none"}`,
+    ].join("\n\n"))],
+  };
+});
+
+interface Scenes { score: number[]; black: [number, number][]; frozen: [number, number][] }
+
+/**
+ * Picture change for every second of a stretch (ffmpeg scene score, 0-1, the
+ * biggest of the two frames sampled that second), plus black and frozen
+ * stretches. The whole video is measured once and cached next to it.
+ */
+async function scenes(a: Analysis, from: number, to: number, whole: boolean): Promise<{ s: Scenes; offset: number }> {
+  const cache = path.join(ANALYSES, a.id, "scenes.json");
+  const cached = await readFile(cache, "utf8").catch(() => "");
+  if (cached) return { s: JSON.parse(cached), offset: 0 };
+  const dir = await mkdtemp(path.join(os.tmpdir(), "clipwise-scenes-"));
+  try {
+    // file= is relative to cwd: a Windows drive colon would break the filter syntax.
+    const { stderr } = await run(getFfmpegPath(), ["-v", "info", "-ss", String(from), "-t", String(to - from), "-i", sourceOf(a), "-an", "-vf",
+      "fps=2,scale=160:-2,blackdetect=d=2:pix_th=0.1,freezedetect=n=0.003:d=4,select='gte(scene,0)',metadata=mode=print:key=lavfi.scene_score:file=scene.txt",
+      "-f", "null", "-"], { cwd: dir, timeout: 120 * 60_000, maxBuffer: 64 * 1024 * 1024 });
+    const raw = await readFile(path.join(dir, "scene.txt"), "utf8");
+    const score: number[] = [];
+    for (const m of raw.matchAll(/pts_time:(\S+)[\s\S]*?scene_score=(\S+)/g)) {
+      const s = Math.floor(Number(m[1]));
+      score[s] = Math.max(score[s] ?? 0, Number(m[2]) || 0);
+    }
+    const out: Scenes = {
+      score: Array.from(score, (v) => Math.round((v ?? 0) * 1000) / 1000),
+      black: [...stderr.matchAll(/black_start:(\S+) black_end:(\S+)/g)].map((m) => [Number(m[1]) + from, Number(m[2]) + from]),
+      frozen: [...stderr.matchAll(/freeze_start: (\S+)[\s\S]*?freeze_end: (\S+)/g)].map((m) => [Number(m[1]) + from, Number(m[2]) + from]),
+    };
+    if (whole) await writeFile(cache, JSON.stringify(out));
+    return { s: out, offset: from };
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
+server.registerTool("get_scene_changes", {
+  description: "For picker 'claude': a cheap picture map: camera cuts, bursts of movement (action, people running, crowd standing, fast pans), and black or frozen stretches to skip. Use with get_loud_moments to find candidates: sound and movement together usually mean something happened. The whole video is measured once (a long video takes a while the first time); a stretch (fromSeconds/toSeconds) is measured fresh.",
+  inputSchema: {
+    analysisId: z.string(),
+    fromSeconds: z.number().min(0).optional(),
+    toSeconds: z.number().optional(),
+    top: z.number().int().min(5).max(80).default(30),
+  },
+}, async ({ analysisId, fromSeconds, toSeconds, top }) => {
+  const a = await load(analysisId);
+  const len = await duration(sourceOf(a));
+  const from = fromSeconds ?? 0;
+  const to = Math.min(toSeconds ?? len, len);
+  if (to - from < 2) throw new Error("Stretch too short.");
+  const whole = from === 0 && to >= len - 1;
+  // Cached scores cover the whole video from 0; a fresh stretch starts at `from`.
+  const { s, offset } = await scenes(a, from, to, whole);
+  const inTime = (t: number) => t >= from && t < to;
+  const cuts = s.score.flatMap((v, i) => (v >= 0.4 && inTime(i + offset) ? [i + offset] : []));
+  const bursts = s.score
+    .map((v, i) => ({ t: i + offset, jump: v - median(s.score.slice(Math.max(0, i - 60), i + 60)) }))
+    .filter((b) => b.jump >= 0.08 && inTime(b.t))
+    .toSorted((x, y) => y.jump - x.jump)
+    .reduce<{ t: number; jump: number }[]>((acc, b) => (acc.length < top && acc.every((p) => Math.abs(p.t - b.t) > 20) ? [...acc, b] : acc), [])
+    .toSorted((x, y) => x.t - y.t);
+  const span = ([x, y]: [number, number]) => `${hms(x)}-${hms(y)} (${Math.round(x)}-${Math.round(y)}s)`;
+  const inRange = ([x, y]: [number, number]) => y > from && x < to;
+  return {
+    content: [txt([
+      `${hms(from)} to ${hms(to)}.`,
+      `Camera cuts (${cuts.length}): ${cuts.length > 60 ? `${cuts.slice(0, 60).join(", ")} ... (many cuts: edited or broadcast footage)` : cuts.join(", ") || "none (one continuous shot)"}`,
+      `Movement bursts, well above the surrounding 2 minutes, in time order:\n${bursts.map((b) => `${hms(b.t)} (${b.t}s) +${b.jump.toFixed(2)}`).join("\n") || "none"}`,
+      `Black stretches (skip): ${s.black.filter(inRange).map(span).join(", ") || "none"}`,
+      `Frozen stretches (skip): ${s.frozen.filter(inRange).map(span).join(", ") || "none"}`,
+    ].join("\n\n"))],
+  };
 });
 
 server.registerTool("get_timeline", {
@@ -314,6 +431,7 @@ server.registerTool("submit_clips", {
       category: z.string().optional(),
       hookStartSeconds: z.number().optional().describe("Optional hook-first: 1-8 s inside the clip to play first as a teaser"),
       hookEndSeconds: z.number().optional(),
+      subject: z.enum(["left", "center", "right", "wide"]).optional().describe("Vertical crop: the third of the frame the action stays in for the whole clip, or 'wide' to show the full width. Leave out when unsure or when the action moves; Clipwise then tracks faces itself."),
     })).min(1).max(10),
   },
 }, async ({ analysisId, picker, clips }) => {

@@ -36,7 +36,7 @@ function prompt(analysisId: string): string {
   return [
     `Use the clipwise MCP to pick clips for analysisId ${analysisId}.`,
     `Follow the HOW TO PICK guide in the clipwise server instructions exactly.`,
-    `Pick up to ${count} clips with get_loud_moments and get_timeline, then call submit_clips once with picker "claude-auto".`,
+    `Pick up to ${count} clips with get_loud_moments, get_scene_changes and get_timeline, do the self-check, then call submit_clips once with picker "claude-auto".`,
     `Aim for ${len.minSeconds}-${len.maxSeconds} seconds a clip (the length the user chose) by building each one around a full stretch of action, not a single moment. Never pad: if the moment or topic is over sooner, end there. A shorter complete clip beats a longer one with an irrelevant end.`,
     a?.focus ? `The user asked for: ${a.focus}.` : "",
     `Do not do anything else. Reply DONE when submitted.`,
@@ -56,7 +56,7 @@ export function autoPickWithClaude(analysisId: string, attempt = 1): void {
             "-p", prompt(analysisId),
             "--mcp-config", path.join(cwd, ".mcp.json"),
             "--strict-mcp-config",
-            "--allowedTools", "mcp__clipwise__get_loud_moments mcp__clipwise__get_timeline mcp__clipwise__get_progress mcp__clipwise__submit_clips",
+            "--allowedTools", "mcp__clipwise__get_loud_moments mcp__clipwise__get_scene_changes mcp__clipwise__get_timeline mcp__clipwise__get_progress mcp__clipwise__submit_clips",
             "--output-format", "text",
           ],
           {

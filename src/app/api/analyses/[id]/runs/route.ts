@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { loadAnalysis } from "@/lib/analyses";
-import { addPickedClips, runModelAgainstAnalysis } from "@/lib/analysisPipeline";
-import type { NormalizedClip } from "@/lib/providers/types";
+import { addPickedClips, isSubject, runModelAgainstAnalysis, type PickedClip } from "@/lib/analysisPipeline";
 import { getProvider } from "@/lib/providers/registry";
 import { DEFAULT_CLIP_LENGTH, isClipLengthPreset } from "@/lib/clipLength";
 
@@ -43,7 +42,7 @@ const str = (v: unknown, max: number) => (typeof v === "string" ? v.slice(0, max
 
 /** Clips chosen by watching the video (Claude over MCP): checked and saved as a run for the user to render. */
 async function savePickedClips(id: string, duration: number, body: { clips: unknown[]; picker?: unknown }) {
-  const clips: NormalizedClip[] = [];
+  const clips: PickedClip[] = [];
   for (const raw of body.clips.slice(0, 10)) {
     const c = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
     const start = num(c.startSeconds);
@@ -65,6 +64,7 @@ async function savePickedClips(id: string, duration: number, body: { clips: unkn
       category: str(c.category, 40) || "moment",
       engagementPotential: "",
       ...(hookOk ? { hookStartSeconds: hookStart, hookEndSeconds: hookEnd } : {}),
+      ...(isSubject(c.subject) ? { subject: c.subject } : {}),
     });
   }
   if (!clips.length) return NextResponse.json({ error: "No clips given." }, { status: 400 });

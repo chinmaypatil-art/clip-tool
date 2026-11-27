@@ -3,7 +3,7 @@ import { copyFile, link, rm, writeFile } from "fs/promises";
 import { existsSync } from "fs";
 import { createTikTokStyleCaptions, type Caption } from "@remotion/captions";
 import { hookToSentence, keepRanges, keptLength, remapCaptions, remapFraming, type KeepRange } from "./tighten";
-import { applyLayout, subtractRanges } from "./clipEdit";
+import { applyLayout, subtractRanges, type LayoutOverride } from "./clipEdit";
 import { randomUUID } from "crypto";
 import { createLimiter } from "./limit";
 import { autoPickWithClaude } from "./claudePicker";
@@ -213,7 +213,25 @@ const AMBIENT_WORDS_PER_MINUTE = 30;
  * footage with no useful transcript). Saved as a finished run; like the
  * one-click flow, the user chooses which ones to render.
  */
-export function addPickedClips(analysisId: string, picker: string, picked: NormalizedClip[]): string {
+const SUBJECTS = ["left", "center", "right", "wide"] as const;
+type Subject = (typeof SUBJECTS)[number];
+export const isSubject = (v: unknown): v is Subject => SUBJECTS.includes(v as Subject);
+
+/** A watched pick, with where the action sits in the frame when the picker could tell. */
+export type PickedClip = NormalizedClip & { subject?: Subject };
+
+/**
+ * The picker's framing becomes the clip's starting layout, the same override
+ * the clip editor makes, so the user can still change it there. Face tracking
+ * stays in charge when there is none.
+ */
+function layoutFor(subject: Subject, startSeconds: number, endSeconds: number): LayoutOverride[] {
+  const span = { fromSeconds: startSeconds, toSeconds: endSeconds };
+  if (subject === "wide") return [{ ...span, mode: "fit", focusX: 50 }];
+  return [{ ...span, mode: "fill", focusX: { left: 25, center: 50, right: 75 }[subject] }];
+}
+
+export function addPickedClips(analysisId: string, picker: string, picked: PickedClip[]): string {
   const analysis = getAnalysis(analysisId);
   const clipLength = analysis?.clipLength ?? DEFAULT_CLIP_LENGTH;
   const { minSeconds } = CLIP_LENGTH_PRESETS[clipLength];
@@ -243,7 +261,12 @@ export function addPickedClips(analysisId: string, picker: string, picked: Norma
     attempts: null,
     error: null,
     promptVersion: "mcp-vision-1",
-    clips: fitted.map((c): AnalysisClip => ({ ...c, id: randomUUID(), renderStatus: "pending" })),
+    clips: fitted.map(({ subject, ...c }): AnalysisClip => ({
+      ...c,
+      id: randomUUID(),
+      renderStatus: "pending",
+      ...(subject ? { edit: { layout: layoutFor(subject, c.startSeconds, c.endSeconds) } } : {}),
+    })),
     rawResponse: picked,
     clipLength,
   };
