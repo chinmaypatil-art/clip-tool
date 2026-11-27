@@ -13,7 +13,7 @@ import { ensureOllama } from "./ollamaHealth";
 import { parseCaptionStyle, WORDS_COMBINE_MS } from "./captionStyle";
 import { fetchVideoTitle, downloadVideo, probeVideo, extractAudioSegment, captureThumbnail, cutClip, findSilences, isYoutubeUrl, isUrl, MediaError } from "./media";
 import { extractYoutubeTranscript, captionsToSegments, referenceText, TranscriptError } from "./transcript";
-import { transcribeWav, WhisperError } from "./whisper";
+import { detectWavLanguage, transcribeWav, WhisperError } from "./whisper";
 import { bundleForJob, renderClip, RenderError } from "./render";
 import { analyzeFraming } from "./framing";
 import { runAnalysis, listAllProviders, getLocalRomanizer, getLocalEndChecker, getLocalWindowedPicker, getLocalClipChecker, getLocalHookPicker } from "./providers/registry";
@@ -130,7 +130,7 @@ export async function runTranscriptExtraction(
     // No gap re-checks either: each gap costs ~35 s (a 66-min video spent 30+ min
     // on them), and every picked clip is re-transcribed with them anyway.
     const captions = await gpuSlot(
-      () => transcribeWav(wavPath, { romanizer: null, fillGaps: false }),
+      () => transcribeWav(wavPath, { romanizer: null, fillGaps: false, onLanguage: (spokenLanguage) => updateAnalysis(analysisId, { spokenLanguage }) }),
       (ahead) => updateAnalysis(analysisId, { queueAhead: ahead || undefined })
     );
     const segments = captionsToSegments(captions);
@@ -588,10 +588,18 @@ export async function renderAnalysisClip(analysisId: string, runId: string, clip
       if (captionStyle) {
         await extractAudioSegment(sourcePath, wavPath, startSeconds, clipLength);
         const romanizer = await getLocalRomanizer(run.provider, run.model);
+        // Videos transcribed before the language was stored: detect it once from the full audio.
+        const fullAudio = path.join(dir, "full-audio.wav");
+        if (!analysis.spokenLanguage && existsSync(fullAudio)) {
+          const spokenLanguage = await detectWavLanguage(fullAudio).catch(() => undefined);
+          if (spokenLanguage) updateAnalysis(analysisId, { spokenLanguage });
+          analysis.spokenLanguage = spokenLanguage;
+        }
         captions = await timer.time("captions", () =>
           transcribeWav(wavPath, {
             romanizer,
             reference: referenceText(analysis.transcript?.segments, startSeconds, startSeconds + clipLength),
+            language: analysis.spokenLanguage,
           })
         );
       }

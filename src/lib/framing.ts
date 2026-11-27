@@ -460,10 +460,12 @@ export async function analyzeFraming(
     const to = s + 1 < shotStarts.length ? shotStarts[s + 1] : duration;
     const decision = decideShot(perShot[s], crop, probe.width / probe.height);
     // A close-up whose speaker gestures out of frame zooms out to a square
-    // view (blurred fill above and below) while the hands are moving.
-    if (decision.mode === "fill" && crop < 1) {
-      const faces = perShot[s].flat();
-      const faceBottom = faces.length ? median(faces.map((f) => f.y2)) : 0.6;
+    // view (blurred fill above and below) while the hands are moving. Only
+    // with a speaker on screen: cooking or craft hands with no face in shot
+    // move all the time and kept the whole clip shrunk.
+    const faces = perShot[s].flat();
+    if (decision.mode === "fill" && crop < 1 && faces.length > 0) {
+      const faceBottom = median(faces.map((f) => f.y2));
       const runs = holdRuns(gestureSamples(frames, shotSamples[s], decision.focusX, crop, faceBottom, (x) => ox + x * cw, (y) => oy + y * ch));
       if (runs.some((r) => r.who)) {
         const square = Math.min(1, probe.height / probe.width);

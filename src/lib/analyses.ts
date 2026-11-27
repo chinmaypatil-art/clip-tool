@@ -115,6 +115,8 @@ export interface Analysis {
   focus?: string;
   /** Too little speech for Gemma to pick from: waits for Claude to watch it over MCP. */
   waitingForClaude?: boolean;
+  /** Whisper's language for the whole video, reused for every clip's captions. */
+  spokenLanguage?: string;
   /** "claude": the user asked for Claude to pick, whatever the speech. */
   picker?: "claude";
 }

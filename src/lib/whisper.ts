@@ -252,6 +252,13 @@ function transcribeWords(wavPath: string, language: Language, prompt: string | n
 }
 
 /** Language detection only (whisper-cli -dl): one encoder pass over the first 30s, no decoding. */
+/** The language of a whole video's audio (Hindi when whisper hears any of its family), for videos transcribed before it was stored. */
+export async function detectWavLanguage(wavPath: string): Promise<string> {
+  if (LANGUAGE_OVERRIDE) return LANGUAGE_OVERRIDE;
+  const detected = await detectLanguage(wavPath);
+  return HINDI_FAMILY.has(detected) ? "hi" : detected;
+}
+
 async function detectLanguage(wavPath: string): Promise<string> {
   const device = activeDevice(await detectDevice());
   await Promise.all([ensureRuntime(device), ensureModel()]);
@@ -494,11 +501,20 @@ export async function transcribeWav(
     romanizer = romanizeHinglishWords,
     reference,
     fillGaps: fill = true,
-  }: { romanizer?: Romanizer | null; reference?: string; fillGaps?: boolean } = {}
+    language: known,
+    onLanguage,
+  }: {
+    romanizer?: Romanizer | null;
+    reference?: string;
+    fillGaps?: boolean;
+    /** The whole video's language: a short clip of sizzling or crowd noise detects as Hindi and gets gibberish captions. */
+    language?: string;
+    onLanguage?: (language: string) => void;
+  } = {}
 ): Promise<Caption[]> {
   try {
-    let language = LANGUAGE_OVERRIDE ?? "hi";
-    if (!LANGUAGE_OVERRIDE) {
+    let language = LANGUAGE_OVERRIDE ?? known ?? "hi";
+    if (!LANGUAGE_OVERRIDE && !known) {
       try {
         const detected = await detectLanguage(wavPath);
         if (!HINDI_FAMILY.has(detected)) language = detected;
@@ -506,6 +522,7 @@ export async function transcribeWav(
         console.error("[whisper] language detection failed, assuming Hindi/English:", describeError(err));
       }
     }
+    onLanguage?.(language);
     // Hindi and Marathi both come out in Devanagari; captions want them in
     // the Latin spelling people type.
     const hinglish = !LANGUAGE_OVERRIDE && (language === "hi" || language === "mr");
