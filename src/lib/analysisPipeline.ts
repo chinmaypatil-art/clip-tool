@@ -29,6 +29,7 @@ import {
   listAnalyses,
   type ModelRun,
   type AnalysisClip,
+  type Analysis,
 } from "./analyses";
 import type { Provider } from "./keystore";
 import { CLIP_LENGTH_PRESETS, clipLengthRange, DEFAULT_CLIP_COUNT, DEFAULT_CLIP_LENGTH, type ClipLengthPreset, type ClipLengthRange } from "./clipLength";
@@ -171,7 +172,7 @@ export async function makeClips(
   if (analysis?.status !== "ready") return;
   // Gemma picks from the words; with hardly any speech (raw sports, phone
   // footage) it has nothing to go on, so Claude picks by watching instead.
-  if (analysis.picker === "claude" || !hasUsableSpeech(analysis.transcript?.segments ?? [], analysis.videoDurationSeconds)) {
+  if (analysis.picker === "claude" || !hasCleanTranscript(analysis.transcript, analysis.videoDurationSeconds)) {
     updateAnalysis(analysisId, { waitingForClaude: true });
     autoPickWithClaude(analysisId);
     return;
@@ -182,20 +183,36 @@ export async function makeClips(
   await runModelAgainstAnalysis(analysisId, CLIP_PICKER.provider, CLIP_PICKER.model, analysis.clipLength);
 }
 
-/** Enough words for a transcript picker: at least 30 a minute (talk runs 120+). */
-export function hasUsableSpeech(segments: TranscriptSegment[], durationSeconds: number | null): boolean {
-  const words = segments.reduce((n, s) => n + s.text.split(/\s+/).filter(Boolean).length, 0);
+/**
+ * Gemma only reads words, so it only picks from a clean transcript: YouTube's
+ * own hand-written captions, or steady talk (80+ words a minute; a podcast runs 120+) that
+ * isn't whisper looping on noise. Everything else is Claude's: it watches.
+ */
+export function hasCleanTranscript(transcript: Analysis["transcript"], durationSeconds: number | null): boolean {
+  const segments = transcript?.segments ?? [];
+  const words = segments.flatMap((s) => s.text.toLowerCase().split(/\s+/).filter(Boolean));
+  if (words.length < 40) return false;
+  // Captions a person wrote on YouTube; auto-captions still get the checks below.
+  if (transcript?.source === "manual") return true;
   const minutes = Math.max(1, (durationSeconds ?? 0) / 60);
-  return words >= 40 && words / minutes >= 30;
+  // Noise comes out as a few words repeated ("kar do kar do kar do").
+  const looping = segments.filter((s) => {
+    const w = s.text.toLowerCase().split(/\s+/).filter(Boolean);
+    return w.length >= 4 && new Set(w).size / w.length < 0.5;
+  });
+  const loopWords = looping.reduce((n, s) => n + s.text.split(/\s+/).filter(Boolean).length, 0);
+  return words.length / minutes >= CLEAN_WORDS_PER_MINUTE && loopWords / words.length < 0.15;
 }
+
+const CLEAN_WORDS_PER_MINUTE = 80;
+
+const AMBIENT_WORDS_PER_MINUTE = 30;
 
 /**
  * Clips an outside picker chose by watching the video (Claude over MCP, for
  * footage with no useful transcript). Saved as a finished run; like the
  * one-click flow, the user chooses which ones to render.
  */
-const AMBIENT_WORDS_PER_MINUTE = 30;
-
 export function addPickedClips(analysisId: string, picker: string, picked: NormalizedClip[]): string {
   const analysis = getAnalysis(analysisId);
   const clipLength = analysis?.clipLength ?? DEFAULT_CLIP_LENGTH;
