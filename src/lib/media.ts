@@ -72,16 +72,17 @@ export function isYoutubeUrl(input: string): boolean {
  * podcast/audio links, etc. — anything yt-dlp supports) to a local mp4.
  * Spotify is explicitly unsupported (DRM-protected; yt-dlp cannot fetch it).
  */
-/** The video's title from yt-dlp, or null if it can't be read. */
-export async function fetchVideoTitle(url: string): Promise<string | null> {
+/** The video's title and YouTube categories ("Sports") from yt-dlp; empty if they can't be read. */
+export async function fetchVideoInfo(url: string): Promise<{ title: string | null; categories: string[] }> {
   try {
-    const { stdout } = await execFileAsync(getYtDlpPath(), ["--print", "title", "--skip-download", "--no-playlist", url], {
+    const { stdout } = await execFileAsync(getYtDlpPath(), ["--print", "title", "--print", "categories", "--skip-download", "--no-playlist", url], {
       windowsHide: true,
       timeout: 30_000,
     });
-    return stdout.trim().split(/\r?\n/)[0] || null;
+    const [title, categories = ""] = stdout.trim().split(/\r?\n/);
+    return { title: title || null, categories: [...categories.matchAll(/'([^']+)'/g)].map((m) => m[1]) };
   } catch {
-    return null;
+    return { title: null, categories: [] };
   }
 }
 

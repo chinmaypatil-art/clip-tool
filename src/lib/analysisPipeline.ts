@@ -11,7 +11,7 @@ import { StageTimer } from "./timing";
 import { processSingleton } from "./processState";
 import { ensureOllama } from "./ollamaHealth";
 import { parseCaptionStyle, WORDS_COMBINE_MS } from "./captionStyle";
-import { fetchVideoTitle, downloadVideo, probeVideo, extractAudioSegment, captureThumbnail, cutClip, findSilences, isYoutubeUrl, isUrl, MediaError } from "./media";
+import { fetchVideoInfo, downloadVideo, probeVideo, extractAudioSegment, captureThumbnail, cutClip, findSilences, isYoutubeUrl, isUrl, MediaError } from "./media";
 import { extractYoutubeTranscript, captionsToSegments, referenceText, TranscriptError } from "./transcript";
 import { detectWavLanguage, transcribeWav, WhisperError } from "./whisper";
 import { bundleForJob, renderClip, RenderError } from "./render";
@@ -218,15 +218,24 @@ export async function makeClips(
   analysisId: string,
   source: { kind: "url"; url: string } | { kind: "file"; path: string }
 ): Promise<void> {
-  if (source.kind === "url") {
-    void fetchVideoTitle(source.url).then((title) => title && updateAnalysis(analysisId, { title }));
-  }
+  const info =
+    source.kind === "url"
+      ? fetchVideoInfo(source.url).then((i) => {
+          if (i.title) updateAnalysis(analysisId, { title: i.title });
+          return i;
+        })
+      : null;
   await runTranscriptExtraction(analysisId, source);
   const analysis = getAnalysis(analysisId);
   if (analysis?.status !== "ready") return;
+  const categories = (await info)?.categories ?? [];
   // Gemma picks from the words; with hardly any speech (raw sports, phone
   // footage) it has nothing to go on, so Claude picks by watching instead.
-  if (analysis.picker === "claude" || !hasCleanTranscript(analysis.transcript, analysis.videoDurationSeconds)) {
+  // Sports always go to Claude: commentary talks on through ads and misses
+  // what happens on the field (Gemma picked ads on a cricket match).
+  const sports = isSports(getAnalysis(analysisId)?.title, categories, analysis.transcript, analysis.videoDurationSeconds);
+  if (sports) console.log(`[analysisPipeline] ${analysisId} looks like sports; Claude picks`);
+  if (analysis.picker === "claude" || sports || !hasCleanTranscript(analysis.transcript, analysis.videoDurationSeconds)) {
     updateAnalysis(analysisId, { waitingForClaude: true });
     autoPickWithClaude(analysisId);
     return;
@@ -259,6 +268,22 @@ export function hasCleanTranscript(transcript: Analysis["transcript"], durationS
 }
 
 const CLEAN_WORDS_PER_MINUTE = 80;
+
+const SPORTS_TITLE = /\b(cricket|ipl|t20|odi|test match|wpl|bbl|psl|football|soccer|fifa|premier league|la liga|kabaddi|pkl|hockey|tennis|badminton|basketball|nba|nfl|baseball|rugby|volleyball|boxing|ufc|mma|wrestling|wwe|formula 1|motogp|olympics?|tournament|innings|match highlights|live score)\b/i;
+// Words commentators use and talk shows rarely do, in English or romanised Hindi/Marathi commentary.
+const SPORTS_WORDS = new Set(["wicket", "wickets", "boundary", "boundaries", "innings", "bowler", "bowled", "batsman", "batter", "lbw", "umpire", "overs", "sixer", "chauka", "chhakka", "goalkeeper", "penalty", "offside", "referee", "freekick", "touchdown", "kabaddi", "raider", "dribble", "striker", "rebound", "dunk", "knockout",
+  // Marathi / Hindi in Devanagari (YouTube's auto-captions)
+  "षटकार", "षटक", "चौकार", "विकेट", "गोलंदाज", "गोलंदाजी", "फलंदाज", "फलंदाजी", "धावा", "धावफलक", "यष्टीरक्षक", "छक्का", "चौका", "गेंदबाज", "गेंदबाजी", "बल्लेबाज", "बल्लेबाजी", "अंपायर", "पंच", "कबड्डी", "गोलकीपर", "पेनल्टी"]);
+
+/** A sports match or highlights: by YouTube category, title, or commentary words. */
+export function isSports(title: string | undefined | null, categories: string[], transcript: Analysis["transcript"], durationSeconds: number | null): boolean {
+  if (categories.some((c) => /sports/i.test(c))) return true;
+  if (title && SPORTS_TITLE.test(title) && !/\b(podcast|interview|reaction|review)\b/i.test(title)) return true;
+  const words = (transcript?.segments ?? []).flatMap((s) => s.text.toLowerCase().split(/[^\p{L}\p{M}]+/u)); // \p{M}: Devanagari vowel signs
+  const hits = words.filter((w) => SPORTS_WORDS.has(w));
+  const minutes = Math.max(1, (durationSeconds ?? 0) / 60);
+  return new Set(hits).size >= 4 && hits.length / minutes >= 0.5;
+}
 
 const AMBIENT_WORDS_PER_MINUTE = 30;
 
