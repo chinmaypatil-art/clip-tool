@@ -587,7 +587,10 @@ export async function renderAnalysisClip(analysisId: string, runId: string, clip
     try {
       if (captionStyle) {
         await extractAudioSegment(sourcePath, wavPath, startSeconds, clipLength);
-        const romanizer = await getLocalRomanizer(run.provider, run.model);
+        // Claude's picks have no local model of their own: Gemma romanizes them
+        // (the cloud fallback needs a Gemini key).
+        const romanizer =
+          (await getLocalRomanizer(run.provider, run.model)) ?? (await getLocalRomanizer(CLIP_PICKER.provider, CLIP_PICKER.model)) ?? null;
         // Videos transcribed before the language was stored: detect it once from the full audio.
         const fullAudio = path.join(dir, "full-audio.wav");
         if (!analysis.spokenLanguage && existsSync(fullAudio)) {
