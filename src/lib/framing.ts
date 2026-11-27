@@ -270,6 +270,7 @@ function decideShot(
 ): Pick<FramingSegment, "mode" | "focusX" | "people" | "sourceAspect"> {
   if (crop >= 1) return { mode: "fill", focusX: 50 }; // source is already at least as tall as 9:16
   const people = groupPeople(samples);
+  if (process.env.FRAMING_DEBUG) console.log("[framing] shot", samples.length, "samples, faces in", samples.filter((f) => f.length).length, "people", people.map((p) => `${median(p.cx).toFixed(2)}/${median(p.width).toFixed(2)}x${p.cx.length}`).join(" "));
   // No face to follow (sports wide shots, food, gameplay): fill the screen
   // on the busiest part of the picture (a sign, the dish, the players).
   // Letterboxing the whole frame left a cricket pitch as a thin strip.
@@ -475,12 +476,10 @@ export async function analyzeFraming(
     return s;
   };
 
-  const perShot: Face[][][] = shotStarts.map(() => []);
-  const shotSamples: number[][] = shotStarts.map(() => []);
+  const sampleFaces: Face[][] = [];
   for (let i = 0; i < frames.length; i++) {
     const t = i / SAMPLE_FPS;
-    const shot = shotOf(t);
-    const sameShotAsPrev = i > 0 && shotOf((i - 1) / SAMPLE_FPS) === shot;
+    const sameShotAsPrev = i > 0 && shotOf((i - 1) / SAMPLE_FPS) === shotOf(t);
     const boxes = await detectFaces(session, frames[i]);
     const faces: Face[] = [];
     for (const [bx1, by1, bx2, by2] of boxes) {
@@ -510,9 +509,36 @@ export async function analyzeFraming(
       }
       faces.push(face);
     }
-    perShot[shot].push(faces);
-    shotSamples[shot].push(i);
+    sampleFaces.push(faces);
   }
+
+  // Streams switch layout (full webcam -> game with a small webcam box)
+  // without a cut ffmpeg can see; the main face jumping across the frame or
+  // shrinking to a small box, and staying so, is a cut too, or one crop
+  // covers both layouts.
+  const main = sampleFaces.map((faces) => faces.reduce<Face | null>((b, f) => (!b || f.x2 - f.x1 > b.x2 - b.x1 ? f : b), null));
+  const near = (from: number, to: number) => {
+    const fs = main.slice(Math.max(0, from), Math.min(main.length, to)).filter((f): f is Face => f !== null);
+    return fs.length >= (to - from) * 0.6 ? { x: median(fs.map((f) => (f.x1 + f.x2) / 2)), w: median(fs.map((f) => f.x2 - f.x1)) } : null;
+  };
+  const JUMP_WINDOW = 2 * SAMPLE_FPS;
+  for (let i = JUMP_WINDOW; i + JUMP_WINDOW <= main.length; i++) {
+    const before = near(i - JUMP_WINDOW, i);
+    const after = near(i, i + JUMP_WINDOW);
+    const t = i / SAMPLE_FPS;
+    if (!before || !after) continue;
+    const jumped = Math.abs(after.x - before.x) >= 0.25 || Math.max(after.w, before.w) >= 1.8 * Math.min(after.w, before.w);
+    if (!jumped) continue;
+    if (shotStarts.some((c) => Math.abs(c - t) < MIN_SHOT_SECONDS * 4) || duration - t < MIN_SHOT_SECONDS) continue;
+    shotStarts.push(t);
+    shotStarts.sort((a, b) => a - b);
+  }
+  const perShot: Face[][][] = shotStarts.map(() => []);
+  const shotSamples: number[][] = shotStarts.map(() => []);
+  sampleFaces.forEach((faces, i) => {
+    perShot[shotOf(i / SAMPLE_FPS)].push(faces);
+    shotSamples[shotOf(i / SAMPLE_FPS)].push(i);
+  });
 
   const segments: FramingSegment[] = [];
   shotStarts.forEach((from, s) => {
