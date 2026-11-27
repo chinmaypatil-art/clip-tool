@@ -35,10 +35,10 @@ export default function Studio() {
 
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100">
-      <header className="sticky top-0 z-20 border-b border-white/[0.06] bg-zinc-950/80 backdrop-blur-md">
+      <header className="sticky top-0 z-20 border-b border-white/[0.06] bg-[#070b17]/70 backdrop-blur-xl">
         <div className="mx-auto flex h-14 max-w-6xl items-center justify-between px-4">
           <button onClick={() => go({ kind: "create" })} className="flex items-center gap-2">
-            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-white text-zinc-900">
+            <span className="flex h-7 w-7 items-center justify-center rounded-lg btn-glow">
               <Scissors size={14} strokeWidth={2.5} />
             </span>
             <span className="text-sm font-semibold tracking-tight">Clipwise</span>

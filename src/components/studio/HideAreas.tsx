@@ -85,7 +85,7 @@ export function HideAreas({ analysisId, saved, onSaved }: { analysisId: string; 
   })();
 
   return (
-    <div className="mb-8 rounded-2xl border border-white/10 bg-white/[0.02] p-4">
+    <div className="mb-8 rounded-2xl glass p-4">
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <p className="text-sm text-zinc-200">Hide area</p>
         <button onClick={() => setOpen(false)} className="text-xs text-zinc-500 hover:text-zinc-300">
@@ -180,7 +180,7 @@ export function HideAreas({ analysisId, saved, onSaved }: { analysisId: string; 
         <button
           onClick={save}
           disabled={!changed || saving}
-          className="rounded-xl bg-white px-4 py-2 text-xs font-medium text-zinc-900 transition disabled:opacity-40"
+          className="btn-glow rounded-full px-5 py-2 text-xs font-medium disabled:opacity-40"
         >
           {saving ? <Loader2 size={12} className="inline animate-spin" /> : "Save"}
         </button>

@@ -116,7 +116,7 @@ export function QuickFeedback({
             onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
             maxLength={500}
             placeholder="Anything else? (optional)"
-            className="w-full rounded-lg border border-white/10 bg-white/[0.03] px-2.5 py-1.5 text-xs text-zinc-100 placeholder:text-zinc-600 focus:border-white/25 focus:outline-none"
+            className="w-full rounded-lg glass px-2.5 py-1.5 text-xs text-zinc-100 placeholder:text-zinc-600 focus:border-white/25 focus:outline-none"
           />
         </>
       )}

@@ -84,7 +84,7 @@ export function ClipTile({
                 )}
               </>
             ) : canRender ? (
-              <button onClick={render} className="rounded-lg bg-white px-3 py-1.5 text-xs font-medium text-zinc-900 hover:bg-zinc-200">
+              <button onClick={render} className="btn-glow rounded-full px-3.5 py-1.5 text-xs font-medium">
                 Render clip
               </button>
             ) : (

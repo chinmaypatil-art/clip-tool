@@ -126,7 +126,7 @@ export function ProjectView({ id, onBack }: { id: string; onBack: () => void }) 
       )}
 
       {active && (
-        <div className="mb-10 rounded-2xl border border-white/10 bg-white/[0.02] p-5">
+        <div className="mb-10 rounded-2xl glass p-5">
           <div className="grid gap-3 sm:grid-cols-4">
             {STEPS.map((label, i) => {
               const state = typeof step === "number" ? (i < step ? "done" : i === step ? "now" : "todo") : "todo";
@@ -185,7 +185,7 @@ export function ProjectView({ id, onBack }: { id: string; onBack: () => void }) 
         </div>
       )}
       {!run && analysis.waitingForClaude && (
-        <div className="rounded-2xl border border-white/10 bg-white/[0.02] px-6 py-10 text-center">
+        <div className="rounded-2xl glass px-6 py-10 text-center">
           <p className="text-sm text-zinc-200">
             {analysis.picker === "claude" ? "Claude is watching the video and picking the clips." : "This video has almost no speech, so Claude is watching it and picking the clips."}
           </p>

@@ -164,7 +164,7 @@ export function LibraryView({ onOpen }: { onOpen: (id: string) => void }) {
           <h1 className="text-xl font-semibold tracking-tight text-white sm:text-2xl">Library</h1>
           <p className="mt-1 text-xs text-zinc-500">Every video you&apos;ve made clips from.</p>
         </div>
-        <label className="flex w-full items-center gap-2 rounded-xl border border-white/10 bg-white/[0.03] px-3 sm:w-64">
+        <label className="flex w-full items-center gap-2 rounded-xl glass px-3 sm:w-64">
           <Search size={14} className="text-zinc-500" />
           <input
             value={query}

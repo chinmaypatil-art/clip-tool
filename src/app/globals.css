@@ -1,9 +1,21 @@
 @import "tailwindcss";
 
-/* The app is dark-only; a light-mode device must not get a white page under white text. */
+/*
+ * Liquid glass: deep navy, frosted surfaces, one cyan → violet → pink edge.
+ * The gradient is the accent; it appears on the main input, the primary
+ * button and active controls only. The app is dark-only.
+ */
 :root {
-  --background: #0a0a0a;
-  --foreground: #ededed;
+  --background: #070b17;
+  --foreground: #e8ecf6;
+  --glass: rgb(255 255 255 / 0.045);
+  --glass-strong: rgb(255 255 255 / 0.075);
+  --hairline: rgb(255 255 255 / 0.09);
+  --glow-cyan: #3ee0f0;
+  --glow-violet: #8b6cff;
+  --glow-pink: #f07ad8;
+  --accent-gradient: linear-gradient(100deg, var(--glow-cyan), var(--glow-violet) 55%, var(--glow-pink));
+  color-scheme: dark;
 }
 
 @theme inline {
@@ -14,7 +26,78 @@
 }
 
 body {
-  background: var(--background);
+  min-height: 100dvh;
   color: var(--foreground);
   font-family: var(--font-geist-sans), system-ui, sans-serif;
+  /* Two faint pools of colour behind the glass give it something to refract. */
+  background:
+    radial-gradient(60rem 40rem at 15% -10%, rgb(62 224 240 / 0.08), transparent 60%),
+    radial-gradient(50rem 40rem at 95% 10%, rgb(139 108 255 / 0.09), transparent 60%),
+    var(--background);
+  background-attachment: fixed;
+}
+
+/* A frosted panel with a hairline top light. */
+.glass {
+  background: linear-gradient(180deg, var(--glass-strong), var(--glass));
+  border: 1px solid var(--hairline);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.06),
+    0 1px 2px rgb(0 0 0 / 0.3),
+    0 12px 32px -12px rgb(0 0 0 / 0.5);
+  backdrop-filter: blur(18px) saturate(140%);
+}
+
+/* The signature: a glass panel whose edge carries the accent gradient. */
+.glass-edge {
+  position: relative;
+  background: linear-gradient(180deg, rgb(20 26 48 / 0.85), rgb(12 16 32 / 0.85));
+  border: 1px solid transparent;
+  box-shadow: 0 20px 50px -20px rgb(139 108 255 / 0.35), 0 0 0 1px rgb(0 0 0 / 0.2);
+  backdrop-filter: blur(18px) saturate(140%);
+}
+.glass-edge::before {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  padding: 1px;
+  background: var(--accent-gradient);
+  opacity: 0.55;
+  transition: opacity 150ms ease-out;
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+}
+.glass-edge:focus-within::before,
+.glass-edge[data-active="true"]::before {
+  opacity: 1;
+}
+
+/* Primary action: gradient pill. */
+.btn-glow {
+  background: var(--accent-gradient);
+  color: #0a0d1a;
+  box-shadow: 0 6px 20px -6px rgb(139 108 255 / 0.6), inset 0 1px 0 rgb(255 255 255 / 0.35);
+  transition: filter 150ms ease-out, box-shadow 150ms ease-out, opacity 150ms ease-out;
+}
+.btn-glow:hover:not(:disabled) {
+  filter: brightness(1.08);
+  box-shadow: 0 8px 26px -6px rgb(139 108 255 / 0.75), inset 0 1px 0 rgb(255 255 255 / 0.35);
+}
+
+/* Selected item in a segmented control or an "on" switch. */
+.seg-on {
+  background: linear-gradient(100deg, rgb(62 224 240 / 0.22), rgb(139 108 255 / 0.28));
+  color: #fff;
+  box-shadow: inset 0 0 0 1px rgb(139 108 255 / 0.45), 0 0 14px -4px rgb(62 224 240 / 0.5);
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .glass,
+  .glass-edge {
+    backdrop-filter: none;
+    background: #111729;
+  }
 }

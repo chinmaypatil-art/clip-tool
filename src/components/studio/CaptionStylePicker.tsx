@@ -97,7 +97,7 @@ function Chip({ active, onClick, children, title }: { active: boolean; onClick: 
       onClick={onClick}
       className={cn(
         "rounded-md px-2 py-1 text-xs transition",
-        active ? "bg-white text-zinc-900" : "bg-white/[0.05] text-zinc-400 hover:bg-white/10 hover:text-zinc-200"
+        active ? "seg-on" : "bg-white/[0.05] text-zinc-400 hover:bg-white/10 hover:text-zinc-200"
       )}
     >
       {children}

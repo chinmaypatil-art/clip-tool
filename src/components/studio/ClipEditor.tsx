@@ -441,7 +441,7 @@ export function ClipEditor({
                     aria-label="What should the AI change?"
                     className="min-w-0 flex-1 bg-transparent px-2.5 text-sm text-zinc-100 placeholder:text-zinc-600 focus:outline-none"
                   />
-                  <button disabled={!ask.trim() || thinking} className="flex h-8 w-8 items-center justify-center rounded-xl bg-white text-zinc-900 disabled:opacity-30" aria-label="Send">
+                  <button disabled={!ask.trim() || thinking} className="flex h-8 w-8 items-center justify-center rounded-full btn-glow disabled:opacity-30" aria-label="Send">
                     <Send size={14} />
                   </button>
                 </form>
@@ -471,7 +471,7 @@ export function ClipEditor({
                   <div className="mb-4 space-y-1.5">
                     <p className="text-[11px] uppercase tracking-wide text-zinc-500">Pictures and videos (B-roll)</p>
                     {broll.map((b, i) => (
-                      <div key={`${b.file}-${i}`} className="flex items-center gap-3 rounded-xl bg-white/[0.04] p-1.5 ring-1 ring-white/[0.08]">
+                      <div key={`${b.file}-${i}`} className="flex items-center gap-3 rounded-xl glass p-1.5 ">
                         {isBrollVideo(b.file) ? (
                           <video src={fileUrl(b.file)} muted preload="metadata" className="h-12 w-7 rounded-md object-cover" />
                         ) : (
